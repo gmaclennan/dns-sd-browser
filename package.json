@@ -1,0 +1,38 @@
+{
+  "name": "dns-sd-browser",
+  "version": "0.0.1",
+  "description": "Spec-compliant DNS-SD browser over mDNS for Node.js",
+  "type": "module",
+  "exports": "./lib/index.js",
+  "main": "./lib/index.js",
+  "types": "./types/index.d.ts",
+  "files": [
+    "lib",
+    "types"
+  ],
+  "scripts": {
+    "test": "node --test test/**/*.test.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "dns-sd",
+    "mdns",
+    "bonjour",
+    "zeroconf",
+    "service-discovery",
+    "multicast-dns"
+  ],
+  "license": "MIT",
+  "author": "Gregor MacLennan",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gmaclennan/dns-sd-browser.git"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "devDependencies": {
+    "dns-packet": "^5.6.1",
+    "typescript": "^5.7.0"
+  }
+}
