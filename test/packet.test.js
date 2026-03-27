@@ -327,7 +327,7 @@ describe('DNS name encoding/decoding', () => {
     assert.equal(decoded.questions[0].name, 'test.local')
   })
 
-  test('handles pointer loops gracefully without hanging', () => {
+  test('handles pointer loops by throwing instead of hanging', () => {
     // Construct a packet with a self-referencing pointer loop
     const buf = Buffer.alloc(30)
     // Header
@@ -342,11 +342,8 @@ describe('DNS name encoding/decoding', () => {
     buf.writeUInt16BE(1, 14)      // QTYPE = A
     buf.writeUInt16BE(1, 16)      // QCLASS = IN
 
-    // Should not hang — the maxJumps guard prevents infinite loops
-    const decoded = dns.decode(buf)
-    assert.ok(decoded.questions.length === 1)
-    // Name will be empty or partial due to the loop
-    assert.equal(typeof decoded.questions[0].name, 'string')
+    // Should throw on pointer loop rather than returning partial data
+    assert.throws(() => dns.decode(buf), /too many compression pointers/)
   })
 
   test('handles chained DNS name compression pointers', () => {
