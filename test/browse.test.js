@@ -818,3 +818,72 @@ describe('Error handling', () => {
     await mdns.destroy()
   })
 })
+
+describe('Event timing', () => {
+  /** @type {number} */
+  let port
+  /** @type {TestAdvertiser} */
+  let advertiser
+
+  before(async () => {
+    port = await getRandomPort()
+    advertiser = new TestAdvertiser({ port })
+    await advertiser.start()
+  })
+
+  after(async () => {
+    await advertiser.stop()
+  })
+
+  test('events between browser creation and iterator start are not lost', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    const browser = mdns.browse('_http._tcp')
+    await mdns.ready()
+
+    // Announce BEFORE creating the iterator — this is the critical test.
+    // Events must be buffered and delivered when iteration starts.
+    await advertiser.announce({
+      name: 'Early Bird',
+      type: '_http._tcp',
+      host: 'early.local',
+      port: 80,
+      addresses: ['192.168.1.1'],
+    })
+
+    // Give time for the event to be processed and buffered
+    await delay(300)
+
+    // NOW create the iterator — the event should already be in the buffer
+    const iter = browser[Symbol.asyncIterator]()
+    const event = await nextEvent(iter, 1000)
+    assert.equal(event.type, 'serviceUp')
+    assert.equal(event.service.name, 'Early Bird')
+
+    browser.destroy()
+    await mdns.destroy()
+  })
+
+  test('services map is populated even without active iterator', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    const browser = mdns.browse('_http._tcp')
+    await mdns.ready()
+
+    await advertiser.announce({
+      name: 'No Iterator',
+      type: '_http._tcp',
+      host: 'noiter.local',
+      port: 80,
+      addresses: ['192.168.1.1'],
+    })
+
+    await delay(300)
+
+    // browser.services should be populated even though we never iterated
+    assert.equal(browser.services.size, 1)
+    const service = browser.services.values().next().value
+    assert.equal(service.name, 'No Iterator')
+
+    browser.destroy()
+    await mdns.destroy()
+  })
+})
