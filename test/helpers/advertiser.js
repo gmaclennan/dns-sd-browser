@@ -1,5 +1,6 @@
 import { createSocket } from 'node:dgram'
 import dnsPacket from 'dns-packet'
+import { TEST_INTERFACE } from './utils.js'
 
 const MDNS_ADDRESS = '224.0.0.251'
 
@@ -18,9 +19,9 @@ export class TestAdvertiser {
   /**
    * @param {object} options
    * @param {number} options.port - mDNS port to use
-   * @param {string} [options.interface='127.0.0.1'] - Network interface
+   * @param {string} [options.interface] - Network interface (defaults to TEST_INTERFACE)
    */
-  constructor({ port, interface: iface = '127.0.0.1' }) {
+  constructor({ port, interface: iface = TEST_INTERFACE }) {
     this.#port = port
     this.#interface = iface
     /** @type {dnsPacket.Packet[]} */

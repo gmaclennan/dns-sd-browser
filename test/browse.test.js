@@ -2,7 +2,7 @@ import { describe, test, before, after, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { DnsSdBrowser } from '../lib/index.js'
 import { TestAdvertiser } from './helpers/advertiser.js'
-import { nextEvent, collectEvents, getRandomPort, delay } from './helpers/utils.js'
+import { nextEvent, collectEvents, getRandomPort, delay, TEST_INTERFACE } from './helpers/utils.js'
 
 describe('Service browsing', () => {
   /** @type {number} */
@@ -23,7 +23,7 @@ describe('Service browsing', () => {
   })
 
   beforeEach(async () => {
-    mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     // Trigger transport start and wait for socket to be ready
     mdns.browse('_noop._tcp').destroy()
     await mdns.ready()
@@ -222,7 +222,7 @@ describe('Service removal', () => {
   })
 
   beforeEach(() => {
-    mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
   })
 
   afterEach(async () => {
@@ -304,7 +304,7 @@ describe('Service updates', () => {
   })
 
   beforeEach(() => {
-    mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
   })
 
   afterEach(async () => {
@@ -389,7 +389,7 @@ describe('TXT record edge cases', () => {
   })
 
   beforeEach(() => {
-    mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
   })
 
   afterEach(async () => {
@@ -458,7 +458,7 @@ describe('Duplicate handling', () => {
   })
 
   beforeEach(() => {
-    mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
   })
 
   afterEach(async () => {
@@ -519,7 +519,7 @@ describe('Service type enumeration', () => {
   })
 
   beforeEach(async () => {
-    mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     mdns.browse('_noop._tcp').destroy()
     await mdns.ready()
     advertiser.clearQueries()
@@ -563,7 +563,7 @@ describe('Query behavior', () => {
   })
 
   beforeEach(async () => {
-    mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     // Trigger transport start and wait for socket to be ready
     mdns.browse('_noop._tcp').destroy()
     await mdns.ready()
@@ -651,7 +651,7 @@ describe('API surface', () => {
   })
 
   test('browser.first() resolves with the first discovered service', async () => {
-    const mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     const browser = mdns.browse('_http._tcp')
     await mdns.ready()
 
@@ -674,7 +674,7 @@ describe('API surface', () => {
   })
 
   test('browser.destroy() ends async iteration', async () => {
-    const mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     const browser = mdns.browse('_http._tcp')
     await mdns.ready()
 
@@ -704,7 +704,7 @@ describe('API surface', () => {
   })
 
   test('AbortSignal cancels browsing', async () => {
-    const mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     const ac = new AbortController()
     const browser = mdns.browse('_http._tcp', { signal: ac.signal })
     await mdns.ready()
@@ -733,7 +733,7 @@ describe('API surface', () => {
   })
 
   test('DnsSdBrowser.destroy() stops all browsers', async () => {
-    const mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     const browser1 = mdns.browse('_http._tcp')
     const browser2 = mdns.browse('_ipp._tcp')
 
@@ -754,7 +754,7 @@ describe('API surface', () => {
   })
 
   test('Symbol.asyncDispose support', async () => {
-    const mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     assert.equal(typeof mdns[Symbol.asyncDispose], 'function')
 
     const browser = mdns.browse('_http._tcp')
@@ -764,7 +764,7 @@ describe('API surface', () => {
   })
 
   test('browser.services is a Map', async () => {
-    const mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     const browser = mdns.browse('_http._tcp')
 
     assert.ok(browser.services instanceof Map)
@@ -792,7 +792,7 @@ describe('Error handling', () => {
   })
 
   test('ignores malformed packets gracefully', async () => {
-    const mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     const browser = mdns.browse('_http._tcp')
     await mdns.ready()
     const iter = browser[Symbol.asyncIterator]()
@@ -836,7 +836,7 @@ describe('Event timing', () => {
   })
 
   test('events between browser creation and iterator start are not lost', async () => {
-    const mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     const browser = mdns.browse('_http._tcp')
     await mdns.ready()
 
@@ -864,7 +864,7 @@ describe('Event timing', () => {
   })
 
   test('services map is populated even without active iterator', async () => {
-    const mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     const browser = mdns.browse('_http._tcp')
     await mdns.ready()
 

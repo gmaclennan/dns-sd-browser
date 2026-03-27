@@ -216,9 +216,24 @@ This library implements the browser/querier side of:
 - QU (unicast-response) bit in queries
 - Subtype browsing
 
-## Naming
+## When to use this library
 
-This package is named `dns-sd-browser` to be explicit about what it does. It complements the [ciao](https://github.com/homebridge/ciao) library which provides DNS-SD advertising. The ciao project [has plans](https://github.com/homebridge/ciao/issues/8) to add browsing in the future but with no timeline.
+**On Windows**, there is no built-in mDNS stack. This library provides a pure-JavaScript DNS-SD browser that works out of the box — no native dependencies, no compilation, no system services to configure. This is the primary use case.
+
+**On macOS and Linux**, the operating system already includes an mDNS implementation (Bonjour on macOS, Avahi on most Linux distributions). Where possible, it is advisable to use these system mDNS stacks instead of running a second, independent mDNS implementation. As [RFC 6762 §15](https://www.rfc-editor.org/rfc/rfc6762#section-15) explains, running multiple mDNS stacks on the same machine has several drawbacks:
+
+- **Port 5353 conflicts** — mDNS uses a well-known port. When multiple implementations bind to it with `SO_REUSEADDR`, only one receives unicast responses. This forces all queries to use multicast, increasing network traffic.
+- **Known-answer list corruption** — when multiple queriers send simultaneous queries, responders may incorrectly merge their known-answer lists (which are assembled by source IP address), leading to missed answers.
+- **Resource efficiency** — two independent mDNS stacks consume twice the memory and CPU, which is compounded by running in an interpreted language.
+
+If you need a DNS-SD browser that integrates with the system mDNS on macOS/Linux, consider using native bindings like the [`mdns`](https://www.npmjs.com/package/mdns) package. However, `mdns` requires C++ compilation on install and can be difficult to set up on some platforms — particularly Windows.
+
+This library is best suited for:
+
+- **Windows** — no system mDNS available
+- **Cross-platform apps** — needs to work everywhere without native compilation
+- **Environments where system mDNS is absent** — containers, embedded systems, CI runners
+- **Testing and development** — quick setup, no system dependencies
 
 ## License
 

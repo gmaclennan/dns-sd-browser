@@ -1,13 +1,22 @@
 import { createSocket } from 'node:dgram'
 
 /**
+ * Network interface to use for multicast in tests.
+ *
+ * Windows does not support multicast on the loopback interface (127.0.0.1),
+ * so we use 0.0.0.0 there, which lets the OS pick a real interface.
+ * On Linux/macOS, loopback keeps test traffic off the network entirely.
+ */
+export const TEST_INTERFACE = process.platform === 'win32' ? '0.0.0.0' : '127.0.0.1'
+
+/**
  * Get a random available UDP port by briefly binding to port 0.
  * @returns {Promise<number>}
  */
 export async function getRandomPort() {
   return new Promise((resolve, reject) => {
     const socket = createSocket('udp4')
-    socket.bind(0, '127.0.0.1', () => {
+    socket.bind(0, () => {
       const { port } = socket.address()
       socket.close(() => resolve(port))
     })

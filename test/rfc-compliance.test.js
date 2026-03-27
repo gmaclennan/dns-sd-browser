@@ -10,7 +10,7 @@ import assert from 'node:assert/strict'
 import dnsPacket from 'dns-packet'
 import { DnsSdBrowser } from '../lib/index.js'
 import { TestAdvertiser } from './helpers/advertiser.js'
-import { nextEvent, collectEvents, getRandomPort, delay } from './helpers/utils.js'
+import { nextEvent, collectEvents, getRandomPort, delay, TEST_INTERFACE } from './helpers/utils.js'
 
 // ─── Cache & TTL Management (RFC 6762 §6, §10.1) ─────────────────────
 
@@ -33,7 +33,7 @@ describe('Cache and TTL management', () => {
   })
 
   beforeEach(async () => {
-    mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     mdns.browse('_noop._tcp').destroy()
     await mdns.ready()
     advertiser.clearQueries()
@@ -187,7 +187,7 @@ describe('Response validation', () => {
   })
 
   beforeEach(async () => {
-    mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     mdns.browse('_noop._tcp').destroy()
     await mdns.ready()
   })
@@ -385,7 +385,7 @@ describe('Query scheduling', () => {
   })
 
   beforeEach(async () => {
-    mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     mdns.browse('_noop._tcp').destroy()
     await mdns.ready()
     advertiser.clearQueries()
@@ -605,7 +605,7 @@ describe('Record type edge cases', () => {
   })
 
   beforeEach(async () => {
-    mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     mdns.browse('_noop._tcp').destroy()
     await mdns.ready()
   })
@@ -897,7 +897,7 @@ describe('Advanced scenarios', () => {
   })
 
   beforeEach(async () => {
-    mdns = new DnsSdBrowser({ port, interface: '127.0.0.1' })
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     mdns.browse('_noop._tcp').destroy()
     await mdns.ready()
   })
