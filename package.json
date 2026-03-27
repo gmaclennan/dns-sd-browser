@@ -11,7 +11,8 @@
     "types"
   ],
   "scripts": {
-    "test": "node --test test/**/*.test.js",
+    "test": "c8 node --test test/**/*.test.js",
+    "test:ci": "c8 --reporter=text --reporter=lcov node --test test/**/*.test.js",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
@@ -32,6 +33,7 @@
     "node": ">=22.0.0"
   },
   "devDependencies": {
+    "c8": "^11.0.0",
     "dns-packet": "^5.6.1",
     "typescript": "^5.7.0"
   }

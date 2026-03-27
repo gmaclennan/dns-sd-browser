@@ -327,6 +327,67 @@ describe('DNS name encoding/decoding', () => {
     assert.equal(decoded.questions[0].name, 'test.local')
   })
 
+  test('handles pointer loops gracefully without hanging', () => {
+    // Construct a packet with a self-referencing pointer loop
+    const buf = Buffer.alloc(30)
+    // Header
+    buf.writeUInt16BE(0, 0)       // ID
+    buf.writeUInt16BE(0x8400, 2)  // Flags: QR=1, AA=1
+    buf.writeUInt16BE(1, 4)       // QDCOUNT = 1
+    buf.writeUInt16BE(0, 6)       // ANCOUNT
+    buf.writeUInt16BE(0, 8)       // NSCOUNT
+    buf.writeUInt16BE(0, 10)      // ARCOUNT
+    // Question with a pointer that points to itself (offset 12)
+    buf.writeUInt16BE(0xC00C, 12) // Pointer to offset 12 = itself
+    buf.writeUInt16BE(1, 14)      // QTYPE = A
+    buf.writeUInt16BE(1, 16)      // QCLASS = IN
+
+    // Should not hang — the maxJumps guard prevents infinite loops
+    const decoded = dns.decode(buf)
+    assert.ok(decoded.questions.length === 1)
+    // Name will be empty or partial due to the loop
+    assert.equal(typeof decoded.questions[0].name, 'string')
+  })
+
+  test('handles chained DNS name compression pointers', () => {
+    // Build a packet where one pointer references another pointer
+    const buf = dnsPacket.encode({
+      type: 'response',
+      id: 0,
+      flags: dnsPacket.AUTHORITATIVE_ANSWER,
+      answers: [
+        {
+          type: 'PTR',
+          name: '_http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          data: 'A._http._tcp.local',
+        },
+        {
+          type: 'PTR',
+          name: '_http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          data: 'B._http._tcp.local',
+        },
+        {
+          type: 'PTR',
+          name: '_http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          data: 'C._http._tcp.local',
+        },
+      ],
+    })
+
+    // dns-packet will naturally create chained pointers for repeated domains
+    const decoded = dns.decode(buf)
+    assert.equal(decoded.answers.length, 3)
+    assert.equal(decoded.answers[0].data, 'A._http._tcp.local')
+    assert.equal(decoded.answers[1].data, 'B._http._tcp.local')
+    assert.equal(decoded.answers[2].data, 'C._http._tcp.local')
+  })
+
   test('round-trips a service instance name with dots and spaces', () => {
     const buf = dnsPacket.encode({
       type: 'response',

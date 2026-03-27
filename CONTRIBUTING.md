@@ -13,10 +13,12 @@ npm install
 ## Running Tests
 
 ```bash
-npm test
+npm test           # runs tests with coverage report
 ```
 
 Tests use Node's built-in test runner and real UDP multicast on loopback — no mocks. The test suite uses `dns-packet` as a reference implementation to construct mDNS response packets, ensuring our codec is cross-validated against a known-good encoder.
+
+Coverage is collected via [c8](https://github.com/bcoe/c8). The coverage report is printed after each test run. For CI, `npm run test:ci` also generates an `lcov` report in `coverage/`.
 
 ## Architecture
 
@@ -76,3 +78,88 @@ These are areas where the implementation does not yet fully comply with the RFCs
 - Add comments for non-obvious protocol logic (cite RFC section numbers)
 - Keep the public API surface small — use `#private` for internals
 - Avoid external runtime dependencies
+
+## Manual Bonjour Compliance Testing
+
+The automated test suite uses loopback multicast with synthetic packets. For real-world compliance testing against the system mDNS stack (Bonjour on macOS, Avahi on Linux), use the helper scripts in `scripts/`.
+
+### Prerequisites
+
+**macOS:** No extra setup — `dns-sd` is built in.
+
+**Linux:** Install Avahi utilities:
+```bash
+sudo apt install avahi-utils avahi-daemon
+```
+
+### Test 1: Discover services advertised by the system mDNS
+
+Start a service using the system mDNS daemon, then verify our browser finds it:
+
+```bash
+# Terminal 1: Advertise a test service via the system daemon
+node scripts/bonjour-advertise.js --name "Compliance Test" --type _http._tcp --port 8080 --txt "path=/test,version=1"
+
+# Terminal 2: Browse with our library
+node scripts/bonjour-browse.js _http._tcp
+```
+
+Expected: Terminal 2 should show `+ UP Compliance Test` with the correct host, port, and TXT records.
+
+### Test 2: Verify goodbye (service removal)
+
+With both terminals running from Test 1, press Ctrl+C in Terminal 1 to stop advertising. Terminal 2 should show `- DOWN Compliance Test`.
+
+### Test 3: Cross-validate against system browser
+
+Compare our output against the system's own mDNS browser:
+
+```bash
+# macOS: system browser
+dns-sd -B _http._tcp
+
+# Linux: system browser
+avahi-browse -r _http._tcp
+
+# Our browser (in another terminal)
+node scripts/bonjour-browse.js _http._tcp
+```
+
+Both should discover the same set of services. Verify:
+- Same service instance names
+- Same host and port
+- Same TXT records
+- Service removal events appear in both
+
+### Test 4: Browse all service types
+
+```bash
+# Our browser
+node scripts/bonjour-browse.js --all
+
+# macOS equivalent
+dns-sd -B _services._dns-sd._udp
+
+# Linux equivalent
+avahi-browse --all
+```
+
+### Test 5: Apple Bonjour Conformance Test (macOS only)
+
+Apple provides a formal Bonjour Conformance Test (BCT) tool:
+
+1. Download BCT from [Apple Developer](https://developer.apple.com/bonjour/) (requires Apple ID)
+2. The download is `BonjourConformanceTest-<version>.dmg`
+3. Run the BCT while our browser is active:
+   ```bash
+   node scripts/bonjour-browse.js _http._tcp
+   ```
+4. The BCT tests various protocol edge cases including:
+   - Record TTL handling
+   - Name conflict resolution
+   - Cache flush behavior
+   - Goodbye packet handling
+
+> **Note:** The BCT is primarily designed for testing advertisers/responders, not browsers. Not all BCT tests are applicable to a browser-only implementation. Focus on the "Querier" and "Passive Observation" test categories.
+
+> **Note:** BCT cannot run in GitHub Actions CI because macOS runners [disable mDNSResponder](https://github.com/actions/runner-images/issues/9628) for security isolation. Always run BCT on a local macOS machine.
