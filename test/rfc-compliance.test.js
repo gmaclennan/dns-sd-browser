@@ -315,11 +315,13 @@ describe('Response validation', () => {
     browser.destroy()
   })
 
-  test('ignores packets with non-zero rcode (RFC 6762 §18.3)', async () => {
+  test('accepts packets with non-zero rcode (RFC 6762 §18.11 — lenient)', async () => {
     const browser = mdns.browse('_http._tcp')
     const iter = browser[Symbol.asyncIterator]()
 
-    // Craft a response with rcode = SERVFAIL (2)
+    // Craft a full service announcement with rcode = SERVFAIL (2).
+    // Per RFC 6762 §18.11, receivers SHOULD silently ignore the rcode field.
+    // Some buggy advertisers set non-zero rcodes in otherwise valid responses.
     const buf = dnsPacket.encode({
       type: 'response',
       id: 0,
@@ -332,23 +334,41 @@ describe('Response validation', () => {
           class: 'IN',
           data: 'BadRcode._http._tcp.local',
         },
+        {
+          type: 'SRV',
+          name: 'BadRcode._http._tcp.local',
+          ttl: 120,
+          class: 'IN',
+          flush: true,
+          data: { target: 'rcode.local', port: 80, priority: 0, weight: 0 },
+        },
+        {
+          type: 'TXT',
+          name: 'BadRcode._http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          flush: true,
+          data: [''],
+        },
+      ],
+      additionals: [
+        {
+          type: 'A',
+          name: 'rcode.local',
+          ttl: 120,
+          class: 'IN',
+          data: '192.168.1.1',
+        },
       ],
     })
     // Set rcode to 2 (SERVFAIL) in byte 3, lower nibble
     buf[3] = (buf[3] & 0xf0) | 0x02
     await advertiser.sendRaw(buf)
 
-    // Then send valid
-    await advertiser.announce({
-      name: 'After Bad Rcode',
-      type: '_http._tcp',
-      host: 'ok2.local',
-      port: 80,
-      addresses: ['192.168.1.1'],
-    })
-
+    // The packet should still be processed despite the non-zero rcode
     const event = await nextEvent(iter)
-    assert.equal(event.service.name, 'After Bad Rcode')
+    assert.equal(event.type, 'serviceUp')
+    assert.equal(event.service.name, 'BadRcode')
 
     browser.destroy()
   })
