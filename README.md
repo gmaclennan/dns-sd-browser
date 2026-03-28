@@ -204,6 +204,105 @@ interface Service {
 }
 ```
 
+## Edge cases and caveats
+
+### `first()` destroys the browser
+
+`first()` iterates internally using `for await...of`. When it returns the first service, the `for await` loop exits early, which triggers the async iterator's `return()` method and calls `destroy()`. After calling `first()`, the browser is stopped and cannot be iterated again:
+
+```js
+const browser = mdns.browse('_http._tcp')
+const service = await browser.first()
+// browser is now destroyed — no need to call browser.destroy()
+// browser.services will contain only the one service found
+```
+
+If you need to keep browsing after finding the first service, use the async iterator directly:
+
+```js
+const browser = mdns.browse('_http._tcp')
+let firstService
+for await (const event of browser) {
+  if (event.type === 'serviceUp') {
+    firstService = event.service
+    break // also destroys the browser
+  }
+}
+```
+
+### `first()` without a timeout hangs forever
+
+If no matching service exists on the network, `first()` will wait indefinitely. Always provide an `AbortSignal` with a timeout:
+
+```js
+const browser = mdns.browse('_http._tcp', {
+  signal: AbortSignal.timeout(10_000)
+})
+const service = await browser.first() // throws after 10s if nothing found
+```
+
+### Single async iterator
+
+Each `ServiceBrowser` supports only **one** active async iterator at a time. Attempting to create a second will throw:
+
+```js
+const browser = mdns.browse('_http._tcp')
+for await (const event of browser) { /* ... */ } // ok
+for await (const event of browser) { /* ... */ } // throws — iterator already active
+```
+
+If you need multiple consumers, read from `browser.services` (the live Map) instead.
+
+### `browseAll()` returns partial Service objects
+
+`browseAll()` queries for service _types_, not service _instances_. The returned `Service` objects represent service types and have incomplete fields:
+
+```js
+const browser = mdns.browseAll()
+for await (const event of browser) {
+  // event.service.fqdn → "_http._tcp.local" (the type, not an instance)
+  // event.service.host → ""
+  // event.service.port → 0
+  // event.service.addresses → []
+}
+```
+
+To discover actual service instances, use the type from `browseAll()` to start a targeted `browse()`.
+
+### `ready()` requires a prior `browse()` call
+
+The mDNS transport is started lazily on the first `browse()` or `browseAll()` call. Calling `ready()` before any browse will throw:
+
+```js
+const mdns = new DnsSdBrowser()
+await mdns.ready() // throws — transport not started yet
+
+const browser = mdns.browse('_http._tcp')
+await mdns.ready() // ok — transport is starting
+```
+
+### Transport start errors are deferred
+
+If the mDNS socket fails to bind (e.g. permission denied, port conflict), the error is **not** thrown from `browse()`. The browser will silently produce no events. To surface transport errors, call `ready()` after starting a browse:
+
+```js
+const browser = mdns.browse('_http._tcp')
+await mdns.ready() // throws if socket binding failed
+```
+
+### Event buffer overflow
+
+Events are buffered (up to 4,096) while waiting for the async iterator to consume them. If a consumer is too slow, the **oldest events are silently dropped**. This means a slow consumer could miss `serviceUp` events and later receive `serviceDown` for services it never saw appear. The `browser.services` Map always reflects the current state regardless of buffer overflow.
+
+### `services` Map keys are FQDNs
+
+The `browser.services` Map is keyed by the fully qualified service name (e.g. `"My Printer._http._tcp.local"`), not the short instance name. Use `service.name` for the human-readable name:
+
+```js
+browser.services.get('My Printer._http._tcp.local') // ✓
+browser.services.get('My Printer') // ✗ undefined
+```
+
 ## RFC Compliance
 
 This library implements the browser/querier side of:
