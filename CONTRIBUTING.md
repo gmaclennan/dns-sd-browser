@@ -58,8 +58,10 @@ When making changes, refer to the relevant RFCs:
 
 The core DNS-SD browsing features are implemented and tested. Remaining areas for improvement:
 
-- **Multi-packet reassembly** — when a truncated response (TC bit) arrives, the browser re-queries with the QU bit to request a unicast reply, but does not reassemble fragmented responses that span multiple packets
-- **IPv6 multicast on loopback** — the transport joins the IPv6 multicast group (FF02::FB) when available, but CI environments often lack IPv6 support; manual testing on an IPv6-capable host is recommended
+- **Cache-flush bit semantics** — the cache-flush bit (RFC 6762 §10.2) is parsed but not acted upon. When a record arrives with the cache-flush bit set, the receiver should flush all cached records with the same name and type (except those received in the last second). Currently, addresses are merged rather than flushed, which can lead to stale addresses persisting when a service changes its IP.
+- **Subtype population on Service objects** — the `subtypes` array on Service is always empty. When subtype PTR records are received, or when browsing a subtype, the subtypes should be populated.
+- **TTL refresh queries** — RFC 6762 §5.2 recommends re-querying at 80%, 85%, 90%, and 95% of a record's TTL to refresh it before expiry. Currently, records simply expire at 100% TTL, which can cause brief service-down/service-up cycles for long-lived services.
+- **Multi-packet known-answer splitting** — when the known-answer list is too large for a single query packet, it should be split across multiple packets with the TC bit set. Currently, all known answers are packed into a single packet.
 
 ## Writing Tests
 
