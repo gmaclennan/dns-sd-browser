@@ -4,7 +4,8 @@ Spec-compliant [DNS-SD](https://www.rfc-editor.org/rfc/rfc6763) browser over [Mu
 
 - **Async iterator API** — modern, backpressure-aware, no forgotten error handlers
 - **Zero dependencies** — pure JavaScript, no native bindings
-- **RFC compliant** — continuous querying, known-answer suppression, cache-flush, goodbye packets
+- **RFC compliant** — continuous querying, known-answer suppression, TTL expiration, IPv4+IPv6 multicast
+- **Interoperable** — lenient with real-world advertiser quirks, strict on security
 - **JSDoc typed** — full type information via JSDoc, checkable with TypeScript
 
 ## Install
@@ -56,6 +57,20 @@ browser.destroy()
 mdns.browse('_http._tcp')
 mdns.browse({ name: 'http', protocol: 'tcp' })
 mdns.browse({ name: 'http' }) // protocol defaults to 'tcp'
+```
+
+### Browse a service subtype
+
+Discover services registered under a specific subtype (RFC 6763 §7.1):
+
+```js
+const browser = mdns.browse('_http._tcp', { subtype: '_printer' })
+
+for await (const event of browser) {
+  if (event.type === 'serviceUp') {
+    console.log(`Printer: ${event.service.name}`)
+  }
+}
 ```
 
 ### Browse all service types
@@ -135,6 +150,7 @@ Start browsing for a service type. Returns a `ServiceBrowser`.
 
 - **serviceType**: `string` like `'_http._tcp'` or object `{ name: 'http', protocol?: 'tcp' }`
 - **options.signal**: `AbortSignal` to cancel browsing
+- **options.subtype**: `string` — browse a service subtype (RFC 6763 §7.1), e.g. `browse('_http._tcp', { subtype: '_printer' })` queries `_printer._sub._http._tcp.local`
 
 ### `mdns.browseAll(options?)`
 
@@ -193,28 +209,62 @@ interface Service {
 This library implements the browser/querier side of:
 
 - **[RFC 6762](https://www.rfc-editor.org/rfc/rfc6762)** — Multicast DNS
-  - Multicast queries on 224.0.0.251:5353
+  - IPv4 and IPv6 multicast (224.0.0.251 and FF02::FB)
   - Continuous querying with exponential backoff (1s, 2s, 4s... up to 1h)
-  - Known-answer suppression in queries
+  - QU (unicast-response) bit on initial queries (§5.4)
+  - Known-answer suppression in queries (§7.1)
+  - TTL-based cache expiration — services are removed when their TTL expires
   - Cache-flush bit handling
   - Goodbye packets (TTL=0)
+  - Truncated response handling — re-queries with QU bit when TC is set (§18.5)
   - DNS name compression (encoding and decoding)
-  - Malformed packet tolerance
+  - Malformed packet rejection with detailed errors
 
 - **[RFC 6763](https://www.rfc-editor.org/rfc/rfc6763)** — DNS-Based Service Discovery
   - PTR record browsing for service instances
   - SRV record resolution (host, port)
-  - TXT record parsing (key=value, boolean flags)
+  - TXT record parsing (key=value, boolean flags, case-insensitive dedup)
   - Service type enumeration (`_services._dns-sd._udp.local`)
+  - Subtype browsing (`_subtype._sub._type._proto.local`)
   - Duplicate suppression
 
-### Not yet implemented
+## Interoperability
 
-- IPv6 multicast (FF02::FB)
-- TTL-based cache expiration (services are only removed via goodbye packets)
-- Truncated message handling (TC bit)
-- QU (unicast-response) bit in queries
-- Subtype browsing
+DNS-SD advertisers in the wild vary in how closely they follow the RFCs. This library is intentionally lenient about accepting non-standard responses, while remaining strict about security-relevant parsing.
+
+### Accepted (lenient)
+
+These advertiser quirks are handled gracefully:
+
+| Quirk | Behavior | Seen in |
+|---|---|---|
+| Split responses (PTR in one packet, SRV in another) | Tracks pending FQDNs, resolves when SRV arrives | ciao, avahi |
+| Non-zero rcode in responses | Ignored per RFC 6762 §18.11 | Embedded devices |
+| Records in authority section | Processed alongside answers and additionals | Various |
+| Missing TXT record | Service emitted with empty `txt: {}` | Minimal advertisers |
+| Missing A/AAAA records | Service emitted with empty `addresses: []` | Split responses |
+| Non-zero packet ID | Accepted (RFC 6762 says ID should be 0, but receivers must not require it) | Legacy implementations |
+| Missing AA (authoritative) bit | Accepted | Various |
+| SRV with port 0 | Accepted as-is | Services indicating "not ready" |
+| Non-standard TTL values | Accepted as-is | Various |
+| Cache-flush bit missing | Not required for processing | Some minimal advertisers |
+| Mixed-case DNS names | Case-insensitive matching per RFC 1035 §3.1 | Various |
+
+### Rejected (strict)
+
+These are security-relevant and remain strictly enforced:
+
+| Check | Why |
+|---|---|
+| QR bit must be 1 (response) | Processing queries as responses would be a spoofing vector |
+| Opcode must be 0 (standard query) | Non-zero opcode means a different DNS operation |
+| Packet must be ≥ 12 bytes | Below DNS header size is always corrupt |
+| Record counts capped at 256/packet | Prevents CPU exhaustion from crafted headers |
+| RDATA must fit within packet | Prevents out-of-bounds reads |
+| DNS names ≤ 253 characters | RFC 1035 §2.3.4 limit, prevents memory abuse |
+| Compression pointer loops detected | Prevents infinite loops (CVE-2006-6870) |
+| Label length ≤ 63 bytes | RFC 1035 limit |
+| Services capped at 1024/browser | Prevents memory exhaustion from flooding |
 
 ## When to use this library
 
