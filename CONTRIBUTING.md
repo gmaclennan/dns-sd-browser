@@ -56,13 +56,10 @@ When making changes, refer to the relevant RFCs:
 
 ## Known Gaps
 
-These are areas where the implementation does not yet fully comply with the RFCs. Tests for some of these exist as skipped tests. Contributions welcome:
+The core DNS-SD browsing features are implemented and tested. Remaining areas for improvement:
 
-- **TTL-based cache expiration** — services should be removed when their record TTLs expire, not just on goodbye packets
-- **IPv6 multicast** — transport only joins the IPv4 multicast group (224.0.0.251), not the IPv6 group (FF02::FB)
-- **Truncated messages** — the TC bit is not handled; multi-packet responses are not reassembled
-- **QU bit** — queries don't set the unicast-response bit for initial queries (RFC 6762 §5.4)
-- **Subtype browsing** — no API for browsing service subtypes
+- **Multi-packet reassembly** — when a truncated response (TC bit) arrives, the browser re-queries with the QU bit to request a unicast reply, but does not reassemble fragmented responses that span multiple packets
+- **IPv6 multicast on loopback** — the transport joins the IPv6 multicast group (FF02::FB) when available, but CI environments often lack IPv6 support; manual testing on an IPv6-capable host is recommended
 
 ## Writing Tests
 
