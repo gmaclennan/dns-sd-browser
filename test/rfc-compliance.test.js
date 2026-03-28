@@ -164,6 +164,48 @@ describe('Cache and TTL management', () => {
 
     browser.destroy()
   })
+
+  test('TXT record with TTL=0 does not update the service', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'TxtGoodbye',
+      type: '_http._tcp',
+      host: 'txtbye.local',
+      port: 80,
+      addresses: ['192.168.1.1'],
+      txt: { version: '1' },
+    })
+
+    const up = await nextEvent(iter)
+    assert.equal(up.type, 'serviceUp')
+
+    // Send a standalone TXT record with TTL=0
+    const txtGoodbye = dnsPacket.encode({
+      type: 'response',
+      id: 0,
+      flags: dnsPacket.AUTHORITATIVE_ANSWER,
+      answers: [{
+        type: 'TXT',
+        name: 'TxtGoodbye._http._tcp.local',
+        ttl: 0,
+        class: 'IN',
+        flush: true,
+        data: ['version=2'],
+      }],
+    })
+    await advertiser.sendRaw(txtGoodbye)
+
+    // TXT goodbye should be silently ignored — not crash, not update
+    await delay(300)
+
+    assert.equal(browser.services.size, 1)
+    const service = browser.services.values().next().value
+    assert.equal(service.txt.version, '1')
+
+    browser.destroy()
+  })
 })
 
 // ─── Response Validation (RFC 6762 §18) ───────────────────────────────

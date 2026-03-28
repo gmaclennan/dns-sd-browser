@@ -2,7 +2,7 @@ import { describe, test, before, after, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import dnsPacket from 'dns-packet'
 import * as dns from '../lib/dns.js'
-import { parseTxtData } from '../lib/service.js'
+import { parseTxtData, parseServiceType, extractInstanceName } from '../lib/service.js'
 import { DnsSdBrowser } from '../lib/index.js'
 import { ServiceBrowser } from '../lib/browser.js'
 import { TestAdvertiser } from './helpers/advertiser.js'
@@ -203,6 +203,84 @@ describe('Fix: parseTxtData uses O(n) duplicate detection', () => {
     const { txt } = parseTxtData(entries)
     assert.equal(txt.Flag, true)
     assert.equal(Object.keys(txt).length, 1)
+  })
+
+  test('TXT with empty key (=value) is parsed as key="" value="value"', () => {
+    const encoder = new TextEncoder()
+    const { txt } = parseTxtData([encoder.encode('=value')])
+    assert.equal(txt[''], 'value')
+  })
+
+  test('TXT with key=<empty> is parsed as empty string value', () => {
+    const encoder = new TextEncoder()
+    const { txt } = parseTxtData([encoder.encode('key=')])
+    assert.equal(txt.key, '')
+  })
+
+  test('TXT with value containing = signs preserves them', () => {
+    const encoder = new TextEncoder()
+    const { txt } = parseTxtData([encoder.encode('eq=a=b=c')])
+    assert.equal(txt.eq, 'a=b=c')
+  })
+
+  test('txtRaw contains raw Uint8Array for binary values', () => {
+    const encoder = new TextEncoder()
+    const { txtRaw } = parseTxtData([encoder.encode('bin=hello')])
+    assert.ok(txtRaw.bin instanceof Uint8Array)
+    assert.equal(new TextDecoder().decode(txtRaw.bin), 'hello')
+  })
+
+  test('empty txtData array returns empty objects', () => {
+    const { txt, txtRaw } = parseTxtData([])
+    assert.deepEqual(txt, {})
+    assert.deepEqual(txtRaw, {})
+  })
+})
+
+describe('Fix: parseServiceType edge cases', () => {
+  test('parses 3-part string with .local suffix', () => {
+    const result = parseServiceType('_http._tcp.local')
+    assert.equal(result.type, '_http._tcp')
+    assert.equal(result.protocol, 'tcp')
+    assert.equal(result.domain, 'local')
+    assert.equal(result.queryName, '_http._tcp.local')
+  })
+
+  test('parses 2-part string without .local suffix', () => {
+    const result = parseServiceType('_http._tcp')
+    assert.equal(result.type, '_http._tcp')
+    assert.equal(result.protocol, 'tcp')
+    assert.equal(result.domain, 'local')
+    assert.equal(result.queryName, '_http._tcp.local')
+  })
+
+  test('parses UDP protocol', () => {
+    const result = parseServiceType('_dns._udp')
+    assert.equal(result.protocol, 'udp')
+  })
+
+  test('object form with underscored name and protocol', () => {
+    const result = parseServiceType({ name: '_http', protocol: '_tcp' })
+    assert.equal(result.type, '_http._tcp')
+    assert.equal(result.protocol, 'tcp')
+  })
+})
+
+describe('Fix: extractInstanceName', () => {
+  test('extracts name when FQDN matches suffix', () => {
+    const name = extractInstanceName(
+      'My Printer._http._tcp.local',
+      '_http._tcp.local'
+    )
+    assert.equal(name, 'My Printer')
+  })
+
+  test('returns full FQDN when suffix does not match (fallback)', () => {
+    const name = extractInstanceName(
+      'My Printer._ipp._tcp.local',
+      '_http._tcp.local'
+    )
+    assert.equal(name, 'My Printer._ipp._tcp.local')
   })
 })
 

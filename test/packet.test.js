@@ -405,3 +405,225 @@ describe('DNS name encoding/decoding', () => {
     assert.equal(decoded.answers[0].data, 'My Web Server._http._tcp.local')
   })
 })
+
+describe('IPv6 encode/decode roundtrip', () => {
+  const ipv6Addresses = [
+    'fe80::1',
+    '::1',
+    '::',
+    'ff02::fb',
+    '2001:db8::1',
+    '2001:db8:85a3::8a2e:370:7334',
+  ]
+
+  for (const addr of ipv6Addresses) {
+    test(`roundtrips ${addr}`, () => {
+      const buf = dnsPacket.encode({
+        type: 'response',
+        id: 0,
+        flags: dnsPacket.AUTHORITATIVE_ANSWER,
+        answers: [{
+          type: 'AAAA',
+          name: 'host.local',
+          ttl: 120,
+          class: 'IN',
+          data: addr,
+        }],
+      })
+
+      const decoded = dns.decode(buf)
+      assert.equal(decoded.answers.length, 1)
+
+      // Decode the result with dns-packet too to get canonical form
+      const reference = dnsPacket.decode(buf)
+      const refAddr = reference.answers[0].data
+
+      // Our decoded address should match the canonical form
+      assert.equal(decoded.answers[0].data, refAddr)
+    })
+  }
+})
+
+describe('DNS record encoding', () => {
+  test('encodes A record in known answers', () => {
+    const buf = dns.encodeQuery({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+      answers: [{
+        name: 'host.local',
+        type: dns.RecordType.A,
+        class: 1,
+        cacheFlush: false,
+        ttl: 120,
+        data: '192.168.1.5',
+      }],
+    })
+
+    const decoded = dnsPacket.decode(buf)
+    assert.equal(decoded.answers?.[0].type, 'A')
+    assert.equal(decoded.answers?.[0].data, '192.168.1.5')
+  })
+
+  test('encodes AAAA record in known answers', () => {
+    const buf = dns.encodeQuery({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+      answers: [{
+        name: 'host.local',
+        type: dns.RecordType.AAAA,
+        class: 1,
+        cacheFlush: false,
+        ttl: 120,
+        data: 'fe80::1',
+      }],
+    })
+
+    const decoded = dnsPacket.decode(buf)
+    assert.equal(decoded.answers?.length, 1)
+    assert.equal(decoded.answers?.[0].type, 'AAAA')
+    assert.ok(decoded.answers?.[0].data?.includes('fe80'))
+  })
+
+  test('encodes SRV record in known answers', () => {
+    const buf = dns.encodeQuery({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+      answers: [{
+        name: 'Test._http._tcp.local',
+        type: dns.RecordType.SRV,
+        class: 1,
+        cacheFlush: true,
+        ttl: 120,
+        data: { priority: 0, weight: 0, port: 8080, target: 'host.local' },
+      }],
+    })
+
+    const decoded = dnsPacket.decode(buf)
+    assert.equal(decoded.answers?.[0].type, 'SRV')
+    assert.equal(decoded.answers?.[0].data?.port, 8080)
+    assert.equal(decoded.answers?.[0].data?.target, 'host.local')
+  })
+
+  test('encodes TXT record in known answers', () => {
+    const buf = dns.encodeQuery({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+      answers: [{
+        name: 'Test._http._tcp.local',
+        type: dns.RecordType.TXT,
+        class: 1,
+        cacheFlush: false,
+        ttl: 4500,
+        data: [Buffer.from('key=value')],
+      }],
+    })
+
+    const decoded = dnsPacket.decode(buf)
+    assert.equal(decoded.answers?.[0].type, 'TXT')
+  })
+
+  test('encodes empty TXT record', () => {
+    const buf = dns.encodeQuery({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+      answers: [{
+        name: 'Test._http._tcp.local',
+        type: dns.RecordType.TXT,
+        class: 1,
+        cacheFlush: false,
+        ttl: 4500,
+        data: [],
+      }],
+    })
+
+    const decoded = dnsPacket.decode(buf)
+    assert.equal(decoded.answers?.[0].type, 'TXT')
+  })
+
+  test('encodes QU bit in question', () => {
+    const buf = dns.encodeQuery({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR, qu: true }],
+    })
+
+    const decoded = dnsPacket.decode(buf)
+    assert.equal(decoded.questions?.[0].name, '_http._tcp.local')
+  })
+})
+
+describe('Malformed record data handling', () => {
+  test('A record with rdlength != 4 returns empty string', () => {
+    const buf = Buffer.alloc(26)
+    buf.writeUInt16BE(0x8400, 2)
+    buf.writeUInt16BE(1, 6)       // ANCOUNT = 1
+    buf[12] = 0                   // Root name
+    buf.writeUInt16BE(1, 13)      // TYPE = A
+    buf.writeUInt16BE(1, 15)      // CLASS = IN
+    buf.writeUInt32BE(120, 17)    // TTL
+    buf.writeUInt16BE(3, 21)      // RDLENGTH = 3 (wrong for A)
+    buf[23] = 192; buf[24] = 168; buf[25] = 1
+
+    const decoded = dns.decode(buf)
+    assert.equal(decoded.answers[0].data, '')
+  })
+
+  test('AAAA record with rdlength != 16 returns empty string', () => {
+    const buf = Buffer.alloc(27)
+    buf.writeUInt16BE(0x8400, 2)
+    buf.writeUInt16BE(1, 6)       // ANCOUNT = 1
+    buf[12] = 0                   // Root name
+    buf.writeUInt16BE(28, 13)     // TYPE = AAAA
+    buf.writeUInt16BE(1, 15)      // CLASS = IN
+    buf.writeUInt32BE(120, 17)    // TTL
+    buf.writeUInt16BE(4, 21)      // RDLENGTH = 4 (wrong for AAAA)
+    buf.writeUInt32BE(0, 23)
+
+    const decoded = dns.decode(buf)
+    assert.equal(decoded.answers[0].data, '')
+  })
+
+  test('unknown record type returns raw bytes', () => {
+    const buf = Buffer.alloc(27)
+    buf.writeUInt16BE(0x8400, 2)
+    buf.writeUInt16BE(1, 6)       // ANCOUNT = 1
+    buf[12] = 0                   // Root name
+    buf.writeUInt16BE(99, 13)     // TYPE = 99 (unknown)
+    buf.writeUInt16BE(1, 15)      // CLASS = IN
+    buf.writeUInt32BE(300, 17)    // TTL
+    buf.writeUInt16BE(4, 21)      // RDLENGTH = 4
+    buf[23] = 0xDE; buf[24] = 0xAD; buf[25] = 0xBE; buf[26] = 0xEF
+
+    const decoded = dns.decode(buf)
+    assert.equal(decoded.answers[0].type, 99)
+    assert.ok(Array.isArray(decoded.answers[0].data))
+    const raw = decoded.answers[0].data[0]
+    assert.equal(raw[0], 0xDE)
+    assert.equal(raw[1], 0xAD)
+    assert.equal(raw[2], 0xBE)
+    assert.equal(raw[3], 0xEF)
+  })
+})
+
+describe('Authority section parsing', () => {
+  test('decodes records in the authority section', () => {
+    const buf = dnsPacket.encode({
+      type: 'response',
+      id: 0,
+      flags: dnsPacket.AUTHORITATIVE_ANSWER,
+      answers: [{
+        type: 'PTR',
+        name: '_http._tcp.local',
+        ttl: 4500,
+        class: 'IN',
+        data: 'Test._http._tcp.local',
+      }],
+      authorities: [{
+        type: 'A',
+        name: 'auth.local',
+        ttl: 120,
+        class: 'IN',
+        data: '10.0.0.1',
+      }],
+    })
+
+    const decoded = dns.decode(buf)
+    assert.equal(decoded.answers.length, 1)
+    assert.equal(decoded.authorities.length, 1)
+    assert.equal(decoded.authorities[0].name, 'auth.local')
+    assert.equal(decoded.authorities[0].data, '10.0.0.1')
+  })
+})

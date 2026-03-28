@@ -201,6 +201,25 @@ describe('Service browsing', () => {
 
     browser.destroy()
   })
+
+  test('accepts 3-part string form with .local suffix', async () => {
+    const browser = mdns.browse('_http._tcp.local')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'Three Part',
+      type: '_http._tcp',
+      host: 'three.local',
+      port: 80,
+      addresses: ['192.168.1.1'],
+    })
+
+    const event = await nextEvent(iter)
+    assert.equal(event.type, 'serviceUp')
+    assert.equal(event.service.name, 'Three Part')
+
+    browser.destroy()
+  })
 })
 
 describe('Service removal', () => {
@@ -766,6 +785,58 @@ describe('API surface', () => {
     assert.equal(browser.services.size, 0)
 
     browser.destroy()
+    await mdns.destroy()
+  })
+
+  test('browse() throws after DnsSdBrowser is destroyed', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    await mdns.destroy()
+
+    assert.throws(
+      () => mdns.browse('_http._tcp'),
+      /has been destroyed/
+    )
+  })
+
+  test('browseAll() throws after DnsSdBrowser is destroyed', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    await mdns.destroy()
+
+    assert.throws(
+      () => mdns.browseAll(),
+      /has been destroyed/
+    )
+  })
+
+  test('double destroy is a no-op', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    await mdns.destroy()
+    await mdns.destroy() // should not throw
+  })
+
+  test('Symbol.asyncDispose actually cleans up the transport', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    const browser = mdns.browse('_http._tcp')
+    await mdns.ready()
+
+    await mdns[Symbol.asyncDispose]()
+
+    assert.throws(
+      () => mdns.browse('_http._tcp'),
+      /has been destroyed/
+    )
+  })
+
+  test('ServiceBrowser Symbol.asyncDispose ends iteration', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await browser[Symbol.asyncDispose]()
+
+    const result = await iter.next()
+    assert.equal(result.done, true)
+
     await mdns.destroy()
   })
 })
