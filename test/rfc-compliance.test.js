@@ -965,7 +965,7 @@ describe('Advanced scenarios', () => {
     await mdns.destroy()
   })
 
-  test('rapid service up/down cycles without event loss', async () => {
+  test('goodbye followed by rapid re-announce cancels the goodbye (RFC 6762 §10.1)', async () => {
     const browser = mdns.browse('_http._tcp')
     const iter = browser[Symbol.asyncIterator]()
 
@@ -976,16 +976,50 @@ describe('Advanced scenarios', () => {
       port: 80,
     }
 
-    // Rapidly announce and remove
+    // Announce, then goodbye, then re-announce quickly
     await advertiser.announce({ ...serviceInfo, addresses: ['192.168.1.1'] })
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+
+    // Goodbye schedules removal after 1 second per RFC 6762 §10.1
     await advertiser.goodbye(serviceInfo)
+    // Re-announce within the 1-second window cancels the pending goodbye
     await advertiser.announce({ ...serviceInfo, addresses: ['192.168.1.1'] })
 
-    // Should get up, down, up in order
-    const events = await collectEvents(iter, 3, 5000)
-    assert.equal(events[0].type, 'serviceUp')
-    assert.equal(events[1].type, 'serviceDown')
-    assert.equal(events[2].type, 'serviceUp')
+    // Wait past the 1-second goodbye window
+    await delay(1500)
+
+    // Service should still be alive — the re-announce cancelled the goodbye
+    assert.equal(browser.services.size, 1, 'service should still exist after cancelled goodbye')
+
+    browser.destroy()
+  })
+
+  test('goodbye removes service after 1-second delay (RFC 6762 §10.1)', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    const serviceInfo = {
+      name: 'DelayedGoodbye',
+      type: '_http._tcp',
+      host: 'delayed.local',
+      port: 80,
+    }
+
+    await advertiser.announce({ ...serviceInfo, addresses: ['192.168.1.1'] })
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+
+    await advertiser.goodbye(serviceInfo)
+
+    // Service should still exist immediately after goodbye
+    assert.equal(browser.services.size, 1, 'service should persist for 1 second after goodbye')
+
+    // After the 1-second delay, the service should be removed
+    const downEvent = await nextEvent(iter, 3000)
+    assert.equal(downEvent.type, 'serviceDown')
+    assert.equal(downEvent.service.name, 'DelayedGoodbye')
+    assert.equal(browser.services.size, 0)
 
     browser.destroy()
   })
