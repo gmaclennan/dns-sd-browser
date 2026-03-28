@@ -495,11 +495,29 @@ describe('TC (truncated) bit handling (RFC 6762 §18.5)', () => {
 
 // ─── IPv6 multicast ─────────────────────────────────────────────────────
 
+/**
+ * Check if IPv6 UDP sockets are available on this host.
+ * GitHub Actions Ubuntu runners have IPv6 loopback (::1) enabled.
+ * Some environments (containers, this dev machine) have it disabled.
+ * @returns {Promise<boolean>}
+ */
+async function hasIPv6() {
+  const { createSocket } = await import('node:dgram')
+  return new Promise((resolve) => {
+    const s = createSocket({ type: 'udp6', reuseAddr: true })
+    s.on('error', () => { resolve(false) })
+    s.bind(0, '::1', () => {
+      s.close(() => resolve(true))
+    })
+  })
+}
+
+const ipv6Available = await hasIPv6()
+
 describe('IPv6 multicast support', () => {
   test('transport starts successfully even when IPv6 is unavailable', async () => {
     // This test validates that the IPv6 socket failure doesn't prevent startup.
-    // On systems without IPv6 (like this CI), the transport should fall back
-    // to IPv4 only.
+    // On systems without IPv6, the transport should fall back to IPv4 only.
     const port = await getRandomPort()
     const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     const browser = mdns.browse('_http._tcp')
@@ -509,5 +527,90 @@ describe('IPv6 multicast support', () => {
 
     browser.destroy()
     await mdns.destroy()
+  })
+
+  test('discovers service announced via IPv6 multicast', { skip: !ipv6Available && 'IPv6 not available on this host' }, async () => {
+    const { createSocket } = await import('node:dgram')
+    const dnsPacketMod = (await import('dns-packet')).default
+
+    const port = await getRandomPort()
+    const mdns = new DnsSdBrowser({ port })
+    const browser = mdns.browse('_http._tcp')
+    await mdns.ready()
+    const iter = browser[Symbol.asyncIterator]()
+
+    // Create an IPv6 advertiser that sends to FF02::FB on the test port
+    const sock6 = createSocket({ type: 'udp6', reuseAddr: true })
+    await new Promise((resolve, reject) => {
+      sock6.on('error', reject)
+      sock6.bind(port, () => {
+        sock6.addMembership('FF02::FB')
+        sock6.setMulticastLoopback(true)
+        sock6.removeListener('error', reject)
+        resolve(undefined)
+      })
+    })
+
+    // Send a service announcement over IPv6
+    const pkt = dnsPacketMod.encode({
+      type: 'response',
+      id: 0,
+      flags: dnsPacketMod.AUTHORITATIVE_ANSWER,
+      answers: [
+        {
+          type: 'PTR',
+          name: '_http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          data: 'IPv6Svc._http._tcp.local',
+        },
+        {
+          type: 'SRV',
+          name: 'IPv6Svc._http._tcp.local',
+          ttl: 120,
+          class: 'IN',
+          flush: true,
+          data: { target: 'v6host.local', port: 8080, priority: 0, weight: 0 },
+        },
+        {
+          type: 'TXT',
+          name: 'IPv6Svc._http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          flush: true,
+          data: ['via=ipv6'],
+        },
+      ],
+      additionals: [
+        {
+          type: 'AAAA',
+          name: 'v6host.local',
+          ttl: 120,
+          class: 'IN',
+          flush: true,
+          data: '::1',
+        },
+      ],
+    })
+
+    await new Promise((resolve, reject) => {
+      sock6.send(pkt, 0, pkt.length, port, 'FF02::FB', (err) => {
+        if (err) reject(err)
+        else resolve(undefined)
+      })
+    })
+
+    const event = await nextEvent(iter, 5000)
+    assert.equal(event.type, 'serviceUp')
+    assert.equal(event.service.name, 'IPv6Svc')
+    assert.equal(event.service.txt.via, 'ipv6')
+    assert.ok(
+      event.service.addresses.some((a) => a.includes('::1')),
+      `Expected an IPv6 address but got: ${event.service.addresses}`
+    )
+
+    browser.destroy()
+    await mdns.destroy()
+    await new Promise((resolve) => sock6.close(resolve))
   })
 })
