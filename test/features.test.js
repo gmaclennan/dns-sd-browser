@@ -536,8 +536,6 @@ describe('TC (truncated) bit handling (RFC 6762 §18.5)', () => {
 
 /**
  * Check if IPv6 UDP sockets are available on this host.
- * GitHub Actions Ubuntu runners have IPv6 loopback (::1) enabled.
- * Some environments (containers, this dev machine) have it disabled.
  * @returns {Promise<boolean>}
  */
 async function hasIPv6() {
@@ -551,7 +549,10 @@ async function hasIPv6() {
   })
 }
 
-const ipv6Available = await hasIPv6()
+// When TEST_IPV6=1 is set (e.g. in CI), the IPv6 test must not be skipped.
+// Otherwise, skip gracefully on hosts without IPv6.
+const forceIPv6 = process.env.TEST_IPV6 === '1'
+const ipv6Available = forceIPv6 || await hasIPv6()
 
 describe('IPv6 multicast support', () => {
   test('transport starts successfully even when IPv6 is unavailable', async () => {

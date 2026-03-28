@@ -29,23 +29,6 @@ jobs:
 
       - name: Run tests with coverage
         run: npm run test:ci
-
-      - name: Verify no tests were unexpectedly skipped
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          echo "Checking IPv6 availability..."
-          node -e "
-            const dgram = require('node:dgram');
-            const s = dgram.createSocket({ type: 'udp6', reuseAddr: true });
-            s.on('error', (e) => { console.log('IPv6 NOT available:', e.code); process.exit(1); });
-            s.bind(0, '::1', () => { console.log('IPv6 available on loopback'); s.close(); });
-          "
-          echo "Re-running tests to capture skip count..."
-          npx c8 node --test test/**/*.test.js 2>&1 | tee /tmp/test-output.txt
-          SKIPPED=$(grep '# skipped' /tmp/test-output.txt | awk '{print $3}')
-          echo "Skipped tests: ${SKIPPED:-0}"
-          if [ "${SKIPPED:-0}" != "0" ]; then
-            echo "::error::Expected 0 skipped tests on Ubuntu (IPv6 should be available) but got $SKIPPED"
-            grep -i 'skip' /tmp/test-output.txt
-            exit 1
-          fi
+        env:
+          # Ubuntu runners have IPv6 loopback — require the IPv6 test to run, not skip.
+          TEST_IPV6: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
