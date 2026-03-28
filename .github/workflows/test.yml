@@ -29,3 +29,6 @@ jobs:
 
       - name: Run tests with coverage
         run: npm run test:ci
+        env:
+          # Ubuntu runners have IPv6 loopback — require the IPv6 test to run, not skip.
+          TEST_IPV6: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}

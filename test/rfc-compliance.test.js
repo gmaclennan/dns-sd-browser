@@ -124,7 +124,7 @@ describe('Cache and TTL management', () => {
     browser.destroy()
   })
 
-  test('address update emits serviceUpdated', async () => {
+  test('address update without cache-flush merges addresses', async () => {
     const browser = mdns.browse('_http._tcp')
     const iter = browser[Symbol.asyncIterator]()
 
@@ -139,7 +139,7 @@ describe('Cache and TTL management', () => {
     const upEvent = await nextEvent(iter)
     assert.equal(upEvent.type, 'serviceUp')
 
-    // Send an additional A record for the same host
+    // Send an additional A record WITHOUT cache-flush — should merge
     const addrUpdate = dnsPacket.encode({
       type: 'response',
       id: 0,
@@ -150,7 +150,7 @@ describe('Cache and TTL management', () => {
           name: 'addrup.local',
           ttl: 120,
           class: 'IN',
-          flush: true,
+          flush: false,
           data: '10.0.0.1',
         },
       ],
@@ -161,6 +161,90 @@ describe('Cache and TTL management', () => {
     assert.equal(updateEvent.type, 'serviceUpdated')
     assert.ok(updateEvent.service.addresses.includes('192.168.1.1'))
     assert.ok(updateEvent.service.addresses.includes('10.0.0.1'))
+
+    browser.destroy()
+  })
+
+  test('address update with cache-flush replaces addresses (RFC 6762 §10.2)', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'Addr Flush',
+      type: '_http._tcp',
+      host: 'addrflush.local',
+      port: 80,
+      addresses: ['192.168.1.1'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+    assert.ok(upEvent.service.addresses.includes('192.168.1.1'))
+
+    // Send an A record WITH cache-flush — should replace, not merge
+    const addrUpdate = dnsPacket.encode({
+      type: 'response',
+      id: 0,
+      flags: dnsPacket.AUTHORITATIVE_ANSWER,
+      answers: [
+        {
+          type: 'A',
+          name: 'addrflush.local',
+          ttl: 120,
+          class: 'IN',
+          flush: true,
+          data: '10.0.0.2',
+        },
+      ],
+    })
+    await advertiser.sendRaw(addrUpdate)
+
+    const updateEvent = await nextEvent(iter)
+    assert.equal(updateEvent.type, 'serviceUpdated')
+    // Old address should be flushed, only new one present
+    assert.deepEqual(updateEvent.service.addresses, ['10.0.0.2'])
+
+    browser.destroy()
+  })
+
+  test('TXT record with TTL=0 does not update the service', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'TxtGoodbye',
+      type: '_http._tcp',
+      host: 'txtbye.local',
+      port: 80,
+      addresses: ['192.168.1.1'],
+      txt: { version: '1' },
+    })
+
+    const up = await nextEvent(iter)
+    assert.equal(up.type, 'serviceUp')
+
+    // Send a standalone TXT record with TTL=0
+    const txtGoodbye = dnsPacket.encode({
+      type: 'response',
+      id: 0,
+      flags: dnsPacket.AUTHORITATIVE_ANSWER,
+      answers: [{
+        type: 'TXT',
+        name: 'TxtGoodbye._http._tcp.local',
+        ttl: 0,
+        class: 'IN',
+        flush: true,
+        data: ['version=2'],
+      }],
+    })
+    await advertiser.sendRaw(txtGoodbye)
+
+    // TXT goodbye should be silently ignored — not crash, not update
+    await delay(300)
+
+    assert.equal(browser.services.size, 1)
+    const service = browser.services.values().next().value
+    assert.equal(service.txt.version, '1')
 
     browser.destroy()
   })
@@ -273,11 +357,13 @@ describe('Response validation', () => {
     browser.destroy()
   })
 
-  test('ignores packets with non-zero rcode (RFC 6762 §18.3)', async () => {
+  test('accepts packets with non-zero rcode (RFC 6762 §18.11 — lenient)', async () => {
     const browser = mdns.browse('_http._tcp')
     const iter = browser[Symbol.asyncIterator]()
 
-    // Craft a response with rcode = SERVFAIL (2)
+    // Craft a full service announcement with rcode = SERVFAIL (2).
+    // Per RFC 6762 §18.11, receivers SHOULD silently ignore the rcode field.
+    // Some buggy advertisers set non-zero rcodes in otherwise valid responses.
     const buf = dnsPacket.encode({
       type: 'response',
       id: 0,
@@ -290,23 +376,41 @@ describe('Response validation', () => {
           class: 'IN',
           data: 'BadRcode._http._tcp.local',
         },
+        {
+          type: 'SRV',
+          name: 'BadRcode._http._tcp.local',
+          ttl: 120,
+          class: 'IN',
+          flush: true,
+          data: { target: 'rcode.local', port: 80, priority: 0, weight: 0 },
+        },
+        {
+          type: 'TXT',
+          name: 'BadRcode._http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          flush: true,
+          data: [''],
+        },
+      ],
+      additionals: [
+        {
+          type: 'A',
+          name: 'rcode.local',
+          ttl: 120,
+          class: 'IN',
+          data: '192.168.1.1',
+        },
       ],
     })
     // Set rcode to 2 (SERVFAIL) in byte 3, lower nibble
     buf[3] = (buf[3] & 0xf0) | 0x02
     await advertiser.sendRaw(buf)
 
-    // Then send valid
-    await advertiser.announce({
-      name: 'After Bad Rcode',
-      type: '_http._tcp',
-      host: 'ok2.local',
-      port: 80,
-      addresses: ['192.168.1.1'],
-    })
-
+    // The packet should still be processed despite the non-zero rcode
     const event = await nextEvent(iter)
-    assert.equal(event.service.name, 'After Bad Rcode')
+    assert.equal(event.type, 'serviceUp')
+    assert.equal(event.service.name, 'BadRcode')
 
     browser.destroy()
   })
@@ -553,32 +657,29 @@ describe('Query scheduling', () => {
 
     advertiser.clearQueries()
 
-    // Wait for a query with multiple known answers
-    try {
-      const query = await advertiser.waitForQuery(
-        (q) =>
-          (q.questions || []).some((qq) => qq.type === 'PTR') &&
-          (q.answers || []).length >= 2,
-        5000
-      )
+    // Wait for a query with multiple known answers.
+    // After both services are discovered, the next re-query (~1s interval)
+    // should include both PTR records as known answers.
+    const query = await advertiser.waitForQuery(
+      (q) =>
+        (q.questions || []).some((qq) => qq.type === 'PTR') &&
+        (q.answers || []).length >= 2,
+      10000
+    )
 
-      const knownNames = (query.answers || [])
-        .filter((a) => a.type === 'PTR')
-        .map((a) => a.data)
-        .sort()
+    const knownNames = (query.answers || [])
+      .filter((a) => a.type === 'PTR')
+      .map((a) => a.data)
+      .sort()
 
-      assert.ok(
-        knownNames.includes('KnownA._http._tcp.local'),
-        'should include KnownA'
-      )
-      assert.ok(
-        knownNames.includes('KnownB._http._tcp.local'),
-        'should include KnownB'
-      )
-    } catch {
-      // If no query arrived with both KAs in the window, that's acceptable
-      // since the timing depends on the query schedule
-    }
+    assert.ok(
+      knownNames.includes('KnownA._http._tcp.local'),
+      'should include KnownA'
+    )
+    assert.ok(
+      knownNames.includes('KnownB._http._tcp.local'),
+      'should include KnownB'
+    )
 
     browser.destroy()
   })
@@ -906,7 +1007,7 @@ describe('Advanced scenarios', () => {
     await mdns.destroy()
   })
 
-  test('rapid service up/down cycles without event loss', async () => {
+  test('goodbye followed by rapid re-announce cancels the goodbye (RFC 6762 §10.1)', async () => {
     const browser = mdns.browse('_http._tcp')
     const iter = browser[Symbol.asyncIterator]()
 
@@ -917,16 +1018,50 @@ describe('Advanced scenarios', () => {
       port: 80,
     }
 
-    // Rapidly announce and remove
+    // Announce, then goodbye, then re-announce quickly
     await advertiser.announce({ ...serviceInfo, addresses: ['192.168.1.1'] })
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+
+    // Goodbye schedules removal after 1 second per RFC 6762 §10.1
     await advertiser.goodbye(serviceInfo)
+    // Re-announce within the 1-second window cancels the pending goodbye
     await advertiser.announce({ ...serviceInfo, addresses: ['192.168.1.1'] })
 
-    // Should get up, down, up in order
-    const events = await collectEvents(iter, 3, 5000)
-    assert.equal(events[0].type, 'serviceUp')
-    assert.equal(events[1].type, 'serviceDown')
-    assert.equal(events[2].type, 'serviceUp')
+    // Wait past the 1-second goodbye window
+    await delay(1500)
+
+    // Service should still be alive — the re-announce cancelled the goodbye
+    assert.equal(browser.services.size, 1, 'service should still exist after cancelled goodbye')
+
+    browser.destroy()
+  })
+
+  test('goodbye removes service after 1-second delay (RFC 6762 §10.1)', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    const serviceInfo = {
+      name: 'DelayedGoodbye',
+      type: '_http._tcp',
+      host: 'delayed.local',
+      port: 80,
+    }
+
+    await advertiser.announce({ ...serviceInfo, addresses: ['192.168.1.1'] })
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+
+    await advertiser.goodbye(serviceInfo)
+
+    // Service should still exist immediately after goodbye
+    assert.equal(browser.services.size, 1, 'service should persist for 1 second after goodbye')
+
+    // After the 1-second delay, the service should be removed
+    const downEvent = await nextEvent(iter, 3000)
+    assert.equal(downEvent.type, 'serviceDown')
+    assert.equal(downEvent.service.name, 'DelayedGoodbye')
+    assert.equal(browser.services.size, 0)
 
     browser.destroy()
   })

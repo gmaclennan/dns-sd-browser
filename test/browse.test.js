@@ -201,6 +201,25 @@ describe('Service browsing', () => {
 
     browser.destroy()
   })
+
+  test('accepts 3-part string form with .local suffix', async () => {
+    const browser = mdns.browse('_http._tcp.local')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'Three Part',
+      type: '_http._tcp',
+      host: 'three.local',
+      port: 80,
+      addresses: ['192.168.1.1'],
+    })
+
+    const event = await nextEvent(iter)
+    assert.equal(event.type, 'serviceUp')
+    assert.equal(event.service.name, 'Three Part')
+
+    browser.destroy()
+  })
 })
 
 describe('Service removal', () => {
@@ -479,18 +498,18 @@ describe('Duplicate handling', () => {
 
     // Announce same service twice
     await advertiser.announce(serviceInfo)
+    await delay(100) // ensure first packet is processed
     await advertiser.announce(serviceInfo)
+    await delay(100) // ensure second packet is processed
 
     const event = await nextEvent(iter)
     assert.equal(event.type, 'serviceUp')
 
-    // Give time for a potential duplicate event
-    await delay(500)
+    // Verify exactly one service exists and no more events are buffered.
+    // The second announce had identical data, so no serviceUpdated should fire.
+    assert.equal(browser.services.size, 1)
 
-    // The second announce of the same service should not generate
-    // another serviceUp event. We verify by checking that no more events
-    // arrive within the timeout. If the iterator had another event queued,
-    // nextEvent would resolve immediately.
+    // Confirm no further events arrive (the buffer should be empty)
     await assert.rejects(
       nextEvent(iter, 500),
       { message: /Timed out/ }
@@ -608,27 +627,22 @@ describe('Query behavior', () => {
     await nextEvent(iter) // serviceUp
     advertiser.clearQueries()
 
-    // Wait for a subsequent query that should include known answers
+    // Wait for a subsequent query that should include known answers.
     // The browser should include the PTR record it already knows about
-    // in the answer section of its query (RFC 6762 §7.1)
-    try {
-      const query = await advertiser.waitForQuery(
-        (q) =>
-          (q.questions || []).some((question) => question.type === 'PTR') &&
-          (q.answers || []).length > 0,
-        10000
-      )
+    // in the answer section of its query (RFC 6762 §7.1).
+    // The first re-query fires ~1s after initial, so 10s is generous.
+    const query = await advertiser.waitForQuery(
+      (q) =>
+        (q.questions || []).some((question) => question.type === 'PTR') &&
+        (q.answers || []).length > 0,
+      10000
+    )
 
-      // The known answer should be the PTR for the discovered service
-      const knownAnswer = query.answers?.find(
-        (a) => a.type === 'PTR' && a.data === 'Known Service._http._tcp.local'
-      )
-      assert.ok(knownAnswer, 'query should include known answer PTR record')
-    } catch {
-      // Known-answer suppression timing depends on query schedule.
-      // If no subsequent query was sent within the timeout, that's acceptable
-      // for this test — the browser may not need to re-query if records are fresh.
-    }
+    // The known answer should be the PTR for the discovered service
+    const knownAnswer = query.answers?.find(
+      (a) => a.type === 'PTR' && a.data === 'Known Service._http._tcp.local'
+    )
+    assert.ok(knownAnswer, 'query should include known answer PTR record')
 
     browser.destroy()
   })
@@ -772,6 +786,92 @@ describe('API surface', () => {
 
     browser.destroy()
     await mdns.destroy()
+  })
+
+  test('browse() throws after DnsSdBrowser is destroyed', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    await mdns.destroy()
+
+    assert.throws(
+      () => mdns.browse('_http._tcp'),
+      /has been destroyed/
+    )
+  })
+
+  test('browseAll() throws after DnsSdBrowser is destroyed', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    await mdns.destroy()
+
+    assert.throws(
+      () => mdns.browseAll(),
+      /has been destroyed/
+    )
+  })
+
+  test('double destroy is a no-op', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    await mdns.destroy()
+    await mdns.destroy() // should not throw
+  })
+
+  test('Symbol.asyncDispose actually cleans up the transport', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    const browser = mdns.browse('_http._tcp')
+    await mdns.ready()
+
+    await mdns[Symbol.asyncDispose]()
+
+    assert.throws(
+      () => mdns.browse('_http._tcp'),
+      /has been destroyed/
+    )
+  })
+
+  test('ServiceBrowser Symbol.asyncDispose ends iteration', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await browser[Symbol.asyncDispose]()
+
+    const result = await iter.next()
+    assert.equal(result.done, true)
+
+    await mdns.destroy()
+  })
+
+  test('destroy during pending goodbye cleans up timers', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    const browser = mdns.browse('_http._tcp')
+    await mdns.ready()
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'PendingBye',
+      type: '_http._tcp',
+      host: 'pending.local',
+      port: 80,
+      addresses: ['192.168.1.1'],
+    })
+
+    const up = await nextEvent(iter)
+    assert.equal(up.type, 'serviceUp')
+
+    // Send goodbye — schedules removal in 1 second
+    await advertiser.goodbye({
+      name: 'PendingBye',
+      type: '_http._tcp',
+      host: 'pending.local',
+      port: 80,
+    })
+
+    // Destroy immediately while goodbye is pending — should not leak timers
+    await delay(100)
+    browser.destroy()
+    await mdns.destroy()
+
+    // If timers leaked, this test would fail with unhandled timer warnings
+    // or the process would hang. The destroy cleans them up.
   })
 })
 

@@ -327,7 +327,7 @@ describe('DNS name encoding/decoding', () => {
     assert.equal(decoded.questions[0].name, 'test.local')
   })
 
-  test('handles pointer loops gracefully without hanging', () => {
+  test('handles pointer loops by throwing instead of hanging', () => {
     // Construct a packet with a self-referencing pointer loop
     const buf = Buffer.alloc(30)
     // Header
@@ -342,11 +342,40 @@ describe('DNS name encoding/decoding', () => {
     buf.writeUInt16BE(1, 14)      // QTYPE = A
     buf.writeUInt16BE(1, 16)      // QCLASS = IN
 
-    // Should not hang — the maxJumps guard prevents infinite loops
-    const decoded = dns.decode(buf)
-    assert.ok(decoded.questions.length === 1)
-    // Name will be empty or partial due to the loop
-    assert.equal(typeof decoded.questions[0].name, 'string')
+    // Should throw on pointer loop rather than returning partial data
+    assert.throws(() => dns.decode(buf), /too many compression pointers/)
+  })
+
+  test('throws when name label extends beyond buffer', () => {
+    // A label that claims 5 bytes but only 3 remain in the buffer
+    const buf = Buffer.alloc(16)
+    buf.writeUInt16BE(0x8400, 2)
+    buf.writeUInt16BE(1, 4)       // QDCOUNT = 1
+    buf[12] = 5                   // Label length 5, but only bytes 13-15 exist
+    buf[13] = 0x61; buf[14] = 0x62; buf[15] = 0x63
+    assert.throws(() => dns.decode(buf), /beyond buffer/)
+  })
+
+  test('throws when name has no terminator and runs off buffer', () => {
+    // A valid 2-byte label followed by end-of-buffer (no null terminator)
+    // After reading the label, offset advances past it, then the loop tries
+    // to read the next length byte which is beyond the buffer.
+    const buf = Buffer.alloc(15)
+    buf.writeUInt16BE(0x8400, 2)
+    buf.writeUInt16BE(1, 4)       // QDCOUNT = 1
+    buf[12] = 2                   // Label length 2
+    buf[13] = 0x61; buf[14] = 0x62 // 'ab' — buffer ends here, no null terminator
+    assert.throws(() => dns.decode(buf), /beyond buffer/)
+  })
+
+  test('throws when compression pointer is truncated (at last byte)', () => {
+    // A compression pointer needs 2 bytes, but the buffer ends after the first byte
+    const buf = Buffer.alloc(13)
+    buf.writeUInt16BE(0x8400, 2) // flags
+    buf.writeUInt16BE(1, 4)       // QDCOUNT = 1
+    // Byte 12 is 0xC0 (start of compression pointer), but byte 13 doesn't exist
+    buf[12] = 0xC0
+    assert.throws(() => dns.decode(buf), /pointer truncated/)
   })
 
   test('handles chained DNS name compression pointers', () => {
@@ -406,5 +435,307 @@ describe('DNS name encoding/decoding', () => {
 
     const decoded = dns.decode(buf)
     assert.equal(decoded.answers[0].data, 'My Web Server._http._tcp.local')
+  })
+})
+
+describe('IPv6 encode/decode roundtrip', () => {
+  const ipv6Addresses = [
+    'fe80::1',
+    '::1',
+    '::',
+    'ff02::fb',
+    '2001:db8::1',
+    '2001:db8:85a3::8a2e:370:7334',
+  ]
+
+  for (const addr of ipv6Addresses) {
+    test(`roundtrips ${addr}`, () => {
+      const buf = dnsPacket.encode({
+        type: 'response',
+        id: 0,
+        flags: dnsPacket.AUTHORITATIVE_ANSWER,
+        answers: [{
+          type: 'AAAA',
+          name: 'host.local',
+          ttl: 120,
+          class: 'IN',
+          data: addr,
+        }],
+      })
+
+      const decoded = dns.decode(buf)
+      assert.equal(decoded.answers.length, 1)
+
+      // Decode the result with dns-packet too to get canonical form
+      const reference = dnsPacket.decode(buf)
+      const refAddr = reference.answers[0].data
+
+      // Our decoded address should match the canonical form
+      assert.equal(decoded.answers[0].data, refAddr)
+    })
+  }
+})
+
+describe('DNS record encoding', () => {
+  test('encodes A record in known answers', () => {
+    const buf = dns.encodeQuery({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+      answers: [{
+        name: 'host.local',
+        type: dns.RecordType.A,
+        class: 1,
+        cacheFlush: false,
+        ttl: 120,
+        data: '192.168.1.5',
+      }],
+    })
+
+    const decoded = dnsPacket.decode(buf)
+    assert.equal(decoded.answers?.[0].type, 'A')
+    assert.equal(decoded.answers?.[0].data, '192.168.1.5')
+  })
+
+  test('encodes AAAA record in known answers', () => {
+    const buf = dns.encodeQuery({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+      answers: [{
+        name: 'host.local',
+        type: dns.RecordType.AAAA,
+        class: 1,
+        cacheFlush: false,
+        ttl: 120,
+        data: 'fe80::1',
+      }],
+    })
+
+    const decoded = dnsPacket.decode(buf)
+    assert.equal(decoded.answers?.length, 1)
+    assert.equal(decoded.answers?.[0].type, 'AAAA')
+    assert.ok(decoded.answers?.[0].data?.includes('fe80'))
+  })
+
+  test('encodes SRV record in known answers', () => {
+    const buf = dns.encodeQuery({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+      answers: [{
+        name: 'Test._http._tcp.local',
+        type: dns.RecordType.SRV,
+        class: 1,
+        cacheFlush: true,
+        ttl: 120,
+        data: { priority: 0, weight: 0, port: 8080, target: 'host.local' },
+      }],
+    })
+
+    const decoded = dnsPacket.decode(buf)
+    assert.equal(decoded.answers?.[0].type, 'SRV')
+    assert.equal(decoded.answers?.[0].data?.port, 8080)
+    assert.equal(decoded.answers?.[0].data?.target, 'host.local')
+  })
+
+  test('encodes TXT record in known answers', () => {
+    const buf = dns.encodeQuery({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+      answers: [{
+        name: 'Test._http._tcp.local',
+        type: dns.RecordType.TXT,
+        class: 1,
+        cacheFlush: false,
+        ttl: 4500,
+        data: [Buffer.from('key=value')],
+      }],
+    })
+
+    const decoded = dnsPacket.decode(buf)
+    assert.equal(decoded.answers?.[0].type, 'TXT')
+  })
+
+  test('encodes empty TXT record', () => {
+    const buf = dns.encodeQuery({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+      answers: [{
+        name: 'Test._http._tcp.local',
+        type: dns.RecordType.TXT,
+        class: 1,
+        cacheFlush: false,
+        ttl: 4500,
+        data: [],
+      }],
+    })
+
+    const decoded = dnsPacket.decode(buf)
+    assert.equal(decoded.answers?.[0].type, 'TXT')
+  })
+
+  test('encodes QU bit in question', () => {
+    const buf = dns.encodeQuery({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR, qu: true }],
+    })
+
+    const decoded = dnsPacket.decode(buf)
+    assert.equal(decoded.questions?.[0].name, '_http._tcp.local')
+  })
+})
+
+describe('Malformed record data handling', () => {
+  test('A record with rdlength != 4 returns empty string', () => {
+    const buf = Buffer.alloc(26)
+    buf.writeUInt16BE(0x8400, 2)
+    buf.writeUInt16BE(1, 6)       // ANCOUNT = 1
+    buf[12] = 0                   // Root name
+    buf.writeUInt16BE(1, 13)      // TYPE = A
+    buf.writeUInt16BE(1, 15)      // CLASS = IN
+    buf.writeUInt32BE(120, 17)    // TTL
+    buf.writeUInt16BE(3, 21)      // RDLENGTH = 3 (wrong for A)
+    buf[23] = 192; buf[24] = 168; buf[25] = 1
+
+    const decoded = dns.decode(buf)
+    assert.equal(decoded.answers[0].data, '')
+  })
+
+  test('AAAA record with rdlength != 16 returns empty string', () => {
+    const buf = Buffer.alloc(27)
+    buf.writeUInt16BE(0x8400, 2)
+    buf.writeUInt16BE(1, 6)       // ANCOUNT = 1
+    buf[12] = 0                   // Root name
+    buf.writeUInt16BE(28, 13)     // TYPE = AAAA
+    buf.writeUInt16BE(1, 15)      // CLASS = IN
+    buf.writeUInt32BE(120, 17)    // TTL
+    buf.writeUInt16BE(4, 21)      // RDLENGTH = 4 (wrong for AAAA)
+    buf.writeUInt32BE(0, 23)
+
+    const decoded = dns.decode(buf)
+    assert.equal(decoded.answers[0].data, '')
+  })
+
+  test('unknown record type returns raw bytes', () => {
+    const buf = Buffer.alloc(27)
+    buf.writeUInt16BE(0x8400, 2)
+    buf.writeUInt16BE(1, 6)       // ANCOUNT = 1
+    buf[12] = 0                   // Root name
+    buf.writeUInt16BE(99, 13)     // TYPE = 99 (unknown)
+    buf.writeUInt16BE(1, 15)      // CLASS = IN
+    buf.writeUInt32BE(300, 17)    // TTL
+    buf.writeUInt16BE(4, 21)      // RDLENGTH = 4
+    buf[23] = 0xDE; buf[24] = 0xAD; buf[25] = 0xBE; buf[26] = 0xEF
+
+    const decoded = dns.decode(buf)
+    assert.equal(decoded.answers[0].type, 99)
+    assert.ok(Array.isArray(decoded.answers[0].data))
+    const raw = decoded.answers[0].data[0]
+    assert.equal(raw[0], 0xDE)
+    assert.equal(raw[1], 0xAD)
+    assert.equal(raw[2], 0xBE)
+    assert.equal(raw[3], 0xEF)
+  })
+})
+
+describe('Authority section parsing', () => {
+  test('decodes records in the authority section', () => {
+    const buf = dnsPacket.encode({
+      type: 'response',
+      id: 0,
+      flags: dnsPacket.AUTHORITATIVE_ANSWER,
+      answers: [{
+        type: 'PTR',
+        name: '_http._tcp.local',
+        ttl: 4500,
+        class: 'IN',
+        data: 'Test._http._tcp.local',
+      }],
+      authorities: [{
+        type: 'A',
+        name: 'auth.local',
+        ttl: 120,
+        class: 'IN',
+        data: '10.0.0.1',
+      }],
+    })
+
+    const decoded = dns.decode(buf)
+    assert.equal(decoded.answers.length, 1)
+    assert.equal(decoded.authorities.length, 1)
+    assert.equal(decoded.authorities[0].name, 'auth.local')
+    assert.equal(decoded.authorities[0].data, '10.0.0.1')
+  })
+})
+
+describe('Multi-packet known-answer splitting', () => {
+  test('small query fits in a single packet', () => {
+    const packets = dns.encodeQueryPackets({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+      answers: [
+        {
+          name: '_http._tcp.local',
+          type: dns.RecordType.PTR,
+          class: 1,
+          cacheFlush: false,
+          ttl: 4500,
+          data: 'Svc1._http._tcp.local',
+        },
+      ],
+    })
+    assert.equal(packets.length, 1)
+
+    const decoded = dnsPacket.decode(packets[0])
+    assert.equal(decoded.questions?.length, 1)
+    assert.equal(decoded.answers?.length, 1)
+  })
+
+  test('large known-answer list is split across multiple packets', () => {
+    // Create enough known answers to exceed ~1472 bytes
+    const answers = []
+    for (let i = 0; i < 50; i++) {
+      answers.push({
+        name: '_http._tcp.local',
+        type: dns.RecordType.PTR,
+        class: 1,
+        cacheFlush: false,
+        ttl: 4500,
+        data: `VeryLongServiceName-${i}-${'x'.repeat(30)}._http._tcp.local`,
+      })
+    }
+
+    const packets = dns.encodeQueryPackets({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+      answers,
+    })
+
+    assert.ok(packets.length > 1, `expected multiple packets but got ${packets.length}`)
+
+    // First packet should have the question and TC bit set
+    const first = dnsPacket.decode(packets[0])
+    assert.equal(first.questions?.length, 1)
+    assert.ok((first.answers?.length ?? 0) > 0, 'first packet should have some answers')
+    // Check TC bit: byte 2, bit 1
+    assert.ok((packets[0][2] & 0x02) !== 0, 'first packet should have TC bit set')
+
+    // Continuation packets should have no questions and no TC bit
+    for (let i = 1; i < packets.length; i++) {
+      const cont = dnsPacket.decode(packets[i])
+      assert.equal(cont.questions?.length, 0, `continuation packet ${i} should have no questions`)
+      assert.ok((cont.answers?.length ?? 0) > 0, `continuation packet ${i} should have answers`)
+      assert.equal(packets[i][2] & 0x02, 0, `continuation packet ${i} should not have TC bit`)
+    }
+
+    // Total answers across all packets should equal original count
+    let totalAnswers = 0
+    for (const pkt of packets) {
+      const decoded = dnsPacket.decode(pkt)
+      totalAnswers += decoded.answers?.length ?? 0
+    }
+    assert.equal(totalAnswers, answers.length)
+
+    // Each packet should fit within the mDNS size limit
+    for (const pkt of packets) {
+      assert.ok(pkt.length <= 1472, `packet size ${pkt.length} exceeds 1472 limit`)
+    }
+  })
+
+  test('query with no answers returns single packet', () => {
+    const packets = dns.encodeQueryPackets({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+    })
+    assert.equal(packets.length, 1)
   })
 })

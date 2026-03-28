@@ -56,13 +56,10 @@ When making changes, refer to the relevant RFCs:
 
 ## Known Gaps
 
-These are areas where the implementation does not yet fully comply with the RFCs. Tests for some of these exist as skipped tests. Contributions welcome:
+The core DNS-SD browsing features are implemented and tested. No major protocol gaps remain. Potential areas for further improvement:
 
-- **TTL-based cache expiration** — services should be removed when their record TTLs expire, not just on goodbye packets
-- **IPv6 multicast** — transport only joins the IPv4 multicast group (224.0.0.251), not the IPv6 group (FF02::FB)
-- **Truncated messages** — the TC bit is not handled; multi-packet responses are not reassembled
-- **QU bit** — queries don't set the unicast-response bit for initial queries (RFC 6762 §5.4)
-- **Subtype browsing** — no API for browsing service subtypes
+- **Source port 5353 check** — RFC 6762 §6 says receivers MUST ignore mDNS responses from ports other than 5353. This is deliberately not enforced because it would break test isolation (tests use random ports) and provides negligible security benefit on a LAN.
+- **Cache-flush per-type granularity** — the cache-flush bit currently replaces all A/AAAA addresses for a host. A more precise implementation would only flush the specific record type (A or AAAA) that has the bit set, preserving records of the other type.
 
 ## Writing Tests
 
