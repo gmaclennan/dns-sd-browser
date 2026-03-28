@@ -479,18 +479,18 @@ describe('Duplicate handling', () => {
 
     // Announce same service twice
     await advertiser.announce(serviceInfo)
+    await delay(100) // ensure first packet is processed
     await advertiser.announce(serviceInfo)
+    await delay(100) // ensure second packet is processed
 
     const event = await nextEvent(iter)
     assert.equal(event.type, 'serviceUp')
 
-    // Give time for a potential duplicate event
-    await delay(500)
+    // Verify exactly one service exists and no more events are buffered.
+    // The second announce had identical data, so no serviceUpdated should fire.
+    assert.equal(browser.services.size, 1)
 
-    // The second announce of the same service should not generate
-    // another serviceUp event. We verify by checking that no more events
-    // arrive within the timeout. If the iterator had another event queued,
-    // nextEvent would resolve immediately.
+    // Confirm no further events arrive (the buffer should be empty)
     await assert.rejects(
       nextEvent(iter, 500),
       { message: /Timed out/ }
@@ -608,27 +608,22 @@ describe('Query behavior', () => {
     await nextEvent(iter) // serviceUp
     advertiser.clearQueries()
 
-    // Wait for a subsequent query that should include known answers
+    // Wait for a subsequent query that should include known answers.
     // The browser should include the PTR record it already knows about
-    // in the answer section of its query (RFC 6762 §7.1)
-    try {
-      const query = await advertiser.waitForQuery(
-        (q) =>
-          (q.questions || []).some((question) => question.type === 'PTR') &&
-          (q.answers || []).length > 0,
-        10000
-      )
+    // in the answer section of its query (RFC 6762 §7.1).
+    // The first re-query fires ~1s after initial, so 10s is generous.
+    const query = await advertiser.waitForQuery(
+      (q) =>
+        (q.questions || []).some((question) => question.type === 'PTR') &&
+        (q.answers || []).length > 0,
+      10000
+    )
 
-      // The known answer should be the PTR for the discovered service
-      const knownAnswer = query.answers?.find(
-        (a) => a.type === 'PTR' && a.data === 'Known Service._http._tcp.local'
-      )
-      assert.ok(knownAnswer, 'query should include known answer PTR record')
-    } catch {
-      // Known-answer suppression timing depends on query schedule.
-      // If no subsequent query was sent within the timeout, that's acceptable
-      // for this test — the browser may not need to re-query if records are fresh.
-    }
+    // The known answer should be the PTR for the discovered service
+    const knownAnswer = query.answers?.find(
+      (a) => a.type === 'PTR' && a.data === 'Known Service._http._tcp.local'
+    )
+    assert.ok(knownAnswer, 'query should include known answer PTR record')
 
     browser.destroy()
   })

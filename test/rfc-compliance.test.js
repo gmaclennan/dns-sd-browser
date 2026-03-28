@@ -553,32 +553,29 @@ describe('Query scheduling', () => {
 
     advertiser.clearQueries()
 
-    // Wait for a query with multiple known answers
-    try {
-      const query = await advertiser.waitForQuery(
-        (q) =>
-          (q.questions || []).some((qq) => qq.type === 'PTR') &&
-          (q.answers || []).length >= 2,
-        5000
-      )
+    // Wait for a query with multiple known answers.
+    // After both services are discovered, the next re-query (~1s interval)
+    // should include both PTR records as known answers.
+    const query = await advertiser.waitForQuery(
+      (q) =>
+        (q.questions || []).some((qq) => qq.type === 'PTR') &&
+        (q.answers || []).length >= 2,
+      10000
+    )
 
-      const knownNames = (query.answers || [])
-        .filter((a) => a.type === 'PTR')
-        .map((a) => a.data)
-        .sort()
+    const knownNames = (query.answers || [])
+      .filter((a) => a.type === 'PTR')
+      .map((a) => a.data)
+      .sort()
 
-      assert.ok(
-        knownNames.includes('KnownA._http._tcp.local'),
-        'should include KnownA'
-      )
-      assert.ok(
-        knownNames.includes('KnownB._http._tcp.local'),
-        'should include KnownB'
-      )
-    } catch {
-      // If no query arrived with both KAs in the window, that's acceptable
-      // since the timing depends on the query schedule
-    }
+    assert.ok(
+      knownNames.includes('KnownA._http._tcp.local'),
+      'should include KnownA'
+    )
+    assert.ok(
+      knownNames.includes('KnownB._http._tcp.local'),
+      'should include KnownB'
+    )
 
     browser.destroy()
   })
