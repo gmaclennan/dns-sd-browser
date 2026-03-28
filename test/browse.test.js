@@ -839,6 +839,40 @@ describe('API surface', () => {
 
     await mdns.destroy()
   })
+
+  test('destroy during pending goodbye cleans up timers', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    const browser = mdns.browse('_http._tcp')
+    await mdns.ready()
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'PendingBye',
+      type: '_http._tcp',
+      host: 'pending.local',
+      port: 80,
+      addresses: ['192.168.1.1'],
+    })
+
+    const up = await nextEvent(iter)
+    assert.equal(up.type, 'serviceUp')
+
+    // Send goodbye — schedules removal in 1 second
+    await advertiser.goodbye({
+      name: 'PendingBye',
+      type: '_http._tcp',
+      host: 'pending.local',
+      port: 80,
+    })
+
+    // Destroy immediately while goodbye is pending — should not leak timers
+    await delay(100)
+    browser.destroy()
+    await mdns.destroy()
+
+    // If timers leaked, this test would fail with unhandled timer warnings
+    // or the process would hang. The destroy cleans them up.
+  })
 })
 
 describe('Error handling', () => {

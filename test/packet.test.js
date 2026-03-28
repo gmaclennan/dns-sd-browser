@@ -346,6 +346,38 @@ describe('DNS name encoding/decoding', () => {
     assert.throws(() => dns.decode(buf), /too many compression pointers/)
   })
 
+  test('throws when name label extends beyond buffer', () => {
+    // A label that claims 5 bytes but only 3 remain in the buffer
+    const buf = Buffer.alloc(16)
+    buf.writeUInt16BE(0x8400, 2)
+    buf.writeUInt16BE(1, 4)       // QDCOUNT = 1
+    buf[12] = 5                   // Label length 5, but only bytes 13-15 exist
+    buf[13] = 0x61; buf[14] = 0x62; buf[15] = 0x63
+    assert.throws(() => dns.decode(buf), /beyond buffer/)
+  })
+
+  test('throws when name has no terminator and runs off buffer', () => {
+    // A valid 2-byte label followed by end-of-buffer (no null terminator)
+    // After reading the label, offset advances past it, then the loop tries
+    // to read the next length byte which is beyond the buffer.
+    const buf = Buffer.alloc(15)
+    buf.writeUInt16BE(0x8400, 2)
+    buf.writeUInt16BE(1, 4)       // QDCOUNT = 1
+    buf[12] = 2                   // Label length 2
+    buf[13] = 0x61; buf[14] = 0x62 // 'ab' — buffer ends here, no null terminator
+    assert.throws(() => dns.decode(buf), /beyond buffer/)
+  })
+
+  test('throws when compression pointer is truncated (at last byte)', () => {
+    // A compression pointer needs 2 bytes, but the buffer ends after the first byte
+    const buf = Buffer.alloc(13)
+    buf.writeUInt16BE(0x8400, 2) // flags
+    buf.writeUInt16BE(1, 4)       // QDCOUNT = 1
+    // Byte 12 is 0xC0 (start of compression pointer), but byte 13 doesn't exist
+    buf[12] = 0xC0
+    assert.throws(() => dns.decode(buf), /pointer truncated/)
+  })
+
   test('handles chained DNS name compression pointers', () => {
     // Build a packet where one pointer references another pointer
     const buf = dnsPacket.encode({

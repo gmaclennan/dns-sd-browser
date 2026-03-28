@@ -264,6 +264,13 @@ describe('Fix: parseServiceType edge cases', () => {
     assert.equal(result.type, '_http._tcp')
     assert.equal(result.protocol, 'tcp')
   })
+
+  test('single-label string defaults protocol to tcp', () => {
+    const result = parseServiceType('_http')
+    assert.equal(result.type, '_http')
+    assert.equal(result.protocol, 'tcp')
+    assert.equal(result.queryName, '_http.local')
+  })
 })
 
 describe('Fix: extractInstanceName', () => {
