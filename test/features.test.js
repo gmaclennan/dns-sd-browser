@@ -97,10 +97,10 @@ describe('TTL-based cache expiration', () => {
     assert.equal(upEvent.service.name, 'ShortLived')
     assert.equal(browser.services.size, 1)
 
-    // Wait for TTL to expire + one check interval (TTL check runs every 10s,
-    // but we can wait a reasonable amount since TTL is only 1s).
-    // The expiry check runs every 10s, so we need to wait up to ~11s.
-    const downEvent = await nextEvent(iter, 15000)
+    // Wait for TTL to expire. The TTL check is scheduled precisely based on
+    // the soonest-expiring record, so with a 1s TTL the service should be
+    // removed within ~2s (1s TTL + 1s minimum check delay clamp).
+    const downEvent = await nextEvent(iter, 5000)
     assert.equal(downEvent.type, 'serviceDown')
     assert.equal(downEvent.service.name, 'ShortLived')
     assert.equal(browser.services.size, 0)

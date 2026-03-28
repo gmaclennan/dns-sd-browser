@@ -266,6 +266,33 @@ These are security-relevant and remain strictly enforced:
 | Label length ≤ 63 bytes | RFC 1035 limit |
 | Services capped at 1024/browser | Prevents memory exhaustion from flooding |
 
+## Security
+
+The DNS packet parser and service resolution logic are hardened against attack patterns found in historical CVEs for [Avahi](https://avahi.org/) and Apple's [mDNSResponder](https://opensource.apple.com/projects/mDNSResponder/).
+
+**Packet parsing** — All input from the network is validated before processing:
+
+- Packets below the 12-byte DNS header minimum are rejected
+- Record counts in the header are capped at 256 per packet to prevent CPU exhaustion from crafted headers claiming thousands of records
+- Each record's RDATA length is validated against the remaining packet bytes before parsing — prevents out-of-bounds reads (CVE-2023-38472 pattern)
+- SRV records require a minimum RDATA length of 7 bytes; TXT string lengths are checked against the RDATA boundary (CVE-2023-38469 pattern)
+- DNS name decompression validates pointer targets are within the packet buffer (CVE-2015-7987 pattern), detects pointer loops with a jump counter (CVE-2006-6870 pattern), and enforces the RFC 1035 §2.3.4 maximum name length of 253 characters
+- Label lengths are validated against both the 63-byte RFC limit and the remaining buffer
+
+**Resource limits** — Bounded data structures prevent memory exhaustion from flooding:
+
+- Each browser tracks at most 1,024 services. Additional services are silently dropped.
+- The known-answer PTR cache is bounded to the same limit
+- The event buffer caps at 4,096 entries, dropping the oldest on overflow
+
+**Response filtering** — The transport layer drops packets that are not valid mDNS responses:
+
+- Only response packets are processed (QR bit must be set)
+- Packets with non-zero opcode are dropped (non-standard DNS operations)
+- Query packets with answers in them (a potential spoofing vector) are ignored
+
+These defenses are verified by a dedicated security test suite (`test/security.test.js`) that exercises each attack pattern directly.
+
 ## When to use this library
 
 **On Windows**, there is no built-in mDNS stack. This library provides a pure-JavaScript DNS-SD browser that works out of the box — no native dependencies, no compilation, no system services to configure. This is the primary use case.
