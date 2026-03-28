@@ -551,8 +551,7 @@ async function hasIPv6() {
 
 // When TEST_IPV6=1 is set (e.g. in CI), the IPv6 test must not be skipped.
 // Otherwise, skip gracefully on hosts without IPv6.
-const forceIPv6 = process.env.TEST_IPV6 === '1'
-const ipv6Available = forceIPv6 || await hasIPv6()
+const runIPv6Tests = process.env.TEST_IPV6 === '1' || await hasIPv6()
 
 describe('IPv6 multicast support', () => {
   test('transport starts successfully even when IPv6 is unavailable', async () => {
@@ -569,7 +568,7 @@ describe('IPv6 multicast support', () => {
     await mdns.destroy()
   })
 
-  test('discovers service announced via IPv6 multicast', { skip: !ipv6Available && 'IPv6 not available on this host' }, async () => {
+  test('discovers service announced via IPv6 multicast', { skip: !runIPv6Tests && 'IPv6 not available on this host' }, async () => {
     const { createSocket } = await import('node:dgram')
     const dnsPacketMod = (await import('dns-packet')).default
 
