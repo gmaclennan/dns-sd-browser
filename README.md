@@ -44,10 +44,9 @@ for await (const event of browser) {
 ### Find the first service
 
 ```js
-const browser = mdns.browse('_http._tcp')
-const service = await browser.first()
+const service = await mdns.browse('_http._tcp').first()
 console.log(service.name, service.host, service.port)
-browser.destroy()
+// No need to destroy the browser — first() cleans up automatically
 ```
 
 ### Object-form service type
@@ -87,29 +86,40 @@ for await (const event of browser) {
 }
 ```
 
-### Cancellation
+### Stopping a browser
+
+Breaking out of a `for await` loop, calling `first()`, or aborting via `AbortSignal` all automatically stop the browser — no manual cleanup needed:
 
 ```js
-// With AbortController
-const ac = new AbortController()
-const browser = mdns.browse('_http._tcp', { signal: ac.signal })
-
-setTimeout(() => ac.abort(), 10_000)
-
+// break / return automatically stops the browser
 for await (const event of browser) {
-  console.log(event)
+  if (event.type === 'serviceUp') {
+    break // browser is stopped and cleaned up
+  }
 }
-// Loop exits when aborted
 
-// With explicit destroy
-browser.destroy()
+// first() stops the browser after finding a service
+const service = await mdns.browse('_http._tcp').first()
 
-// With await using (Symbol.asyncDispose)
-{
-  await using mdns = new DnsSdBrowser()
-  const browser = mdns.browse('_http._tcp')
-  // automatically cleaned up at end of block
+// AbortSignal stops the browser when aborted
+const browser = mdns.browse('_http._tcp', {
+  signal: AbortSignal.timeout(10_000)
+})
+for await (const event of browser) {
+  console.log(event) // loop exits after 10s
 }
+```
+
+Call `browser.destroy()` explicitly only if you are **not** consuming the async iterator (e.g. only polling `browser.services`):
+
+```js
+const browser = mdns.browse('_http._tcp')
+
+// Poll the live services map without iterating
+setTimeout(() => {
+  console.log('Found:', [...browser.services.values()])
+  browser.destroy() // must destroy manually since we never iterated
+}, 5000)
 ```
 
 ### Current services snapshot
@@ -127,10 +137,20 @@ for (const [fqdn, service] of browser.services) {
 
 ### Cleanup
 
-Always destroy the `DnsSdBrowser` when done to close the mDNS socket:
+Always destroy the `DnsSdBrowser` instance when done to close the mDNS socket. Destroying the `DnsSdBrowser` also stops all its browsers:
 
 ```js
 await mdns.destroy() // stops all browsers and closes the socket
+```
+
+Or use `await using` for automatic cleanup:
+
+```js
+{
+  await using mdns = new DnsSdBrowser()
+  const browser = mdns.browse('_http._tcp')
+  // mdns and all browsers cleaned up at end of block
+}
 ```
 
 ## API
@@ -171,8 +191,8 @@ Returned by `browse()` and `browseAll()`. Implements `AsyncIterable<BrowseEvent>
 | Property/Method | Type | Description |
 |-----------------|------|-------------|
 | `services` | `Map<string, Service>` | Live map of currently discovered services |
-| `first()` | `Promise<Service>` | Resolves with the first `serviceUp` event |
-| `destroy()` | `void` | Stop browsing and end iteration |
+| `first()` | `Promise<Service>` | Resolves with the first `serviceUp` event, then stops the browser |
+| `destroy()` | `void` | Stop browsing and end iteration (called automatically by `first()`, `break`, and `AbortSignal`) |
 | `[Symbol.asyncIterator]()` | `AsyncIterableIterator<BrowseEvent>` | Iterate over discovery events |
 | `[Symbol.asyncDispose]()` | `Promise<void>` | For `await using` support |
 
@@ -206,26 +226,17 @@ interface Service {
 
 ## Edge cases and caveats
 
-### `first()` destroys the browser
+### `first()` and `break` stop the browser
 
-`first()` iterates internally using `for await...of`. When it returns the first service, the `for await` loop exits early, which triggers the async iterator's `return()` method and calls `destroy()`. After calling `first()`, the browser is stopped and cannot be iterated again:
-
-```js
-const browser = mdns.browse('_http._tcp')
-const service = await browser.first()
-// browser is now destroyed — no need to call browser.destroy()
-// browser.services will contain only the one service found
-```
-
-If you need to keep browsing after finding the first service, use the async iterator directly:
+Both `first()` and `break`/`return` from a `for await` loop automatically stop the browser. After either, the browser is destroyed and cannot be iterated again. If you need to find the first service and then keep browsing, consume events without breaking:
 
 ```js
 const browser = mdns.browse('_http._tcp')
 let firstService
 for await (const event of browser) {
-  if (event.type === 'serviceUp') {
+  if (event.type === 'serviceUp' && !firstService) {
     firstService = event.service
-    break // also destroys the browser
+    // don't break — keep browsing for more services
   }
 }
 ```
