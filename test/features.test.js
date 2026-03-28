@@ -359,6 +359,45 @@ describe('Subtype browsing (RFC 6763 §7.1)', () => {
 
     browser.destroy()
   })
+
+  test('populates subtypes array from subtype PTR records', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    // First, announce the service normally
+    await advertiser.announce({
+      name: 'SubtypeSvc',
+      type: '_http._tcp',
+      host: 'sub.local',
+      port: 80,
+      addresses: ['10.0.0.1'],
+    })
+
+    const up = await nextEvent(iter)
+    assert.equal(up.type, 'serviceUp')
+    assert.deepEqual(up.service.subtypes, [])
+
+    // Now send a subtype PTR record linking this service to _printer subtype
+    const subtypePkt = dnsPacket.encode({
+      type: 'response',
+      id: 0,
+      flags: dnsPacket.AUTHORITATIVE_ANSWER,
+      answers: [{
+        type: 'PTR',
+        name: '_printer._sub._http._tcp.local',
+        ttl: 4500,
+        class: 'IN',
+        data: 'SubtypeSvc._http._tcp.local',
+      }],
+    })
+    await advertiser.sendRaw(subtypePkt)
+
+    const updated = await nextEvent(iter)
+    assert.equal(updated.type, 'serviceUpdated')
+    assert.deepEqual(updated.service.subtypes, ['_printer'])
+
+    browser.destroy()
+  })
 })
 
 // ─── TC bit handling ────────────────────────────────────────────────────

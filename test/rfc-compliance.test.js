@@ -124,7 +124,7 @@ describe('Cache and TTL management', () => {
     browser.destroy()
   })
 
-  test('address update emits serviceUpdated', async () => {
+  test('address update without cache-flush merges addresses', async () => {
     const browser = mdns.browse('_http._tcp')
     const iter = browser[Symbol.asyncIterator]()
 
@@ -139,7 +139,7 @@ describe('Cache and TTL management', () => {
     const upEvent = await nextEvent(iter)
     assert.equal(upEvent.type, 'serviceUp')
 
-    // Send an additional A record for the same host
+    // Send an additional A record WITHOUT cache-flush — should merge
     const addrUpdate = dnsPacket.encode({
       type: 'response',
       id: 0,
@@ -150,7 +150,7 @@ describe('Cache and TTL management', () => {
           name: 'addrup.local',
           ttl: 120,
           class: 'IN',
-          flush: true,
+          flush: false,
           data: '10.0.0.1',
         },
       ],
@@ -161,6 +161,48 @@ describe('Cache and TTL management', () => {
     assert.equal(updateEvent.type, 'serviceUpdated')
     assert.ok(updateEvent.service.addresses.includes('192.168.1.1'))
     assert.ok(updateEvent.service.addresses.includes('10.0.0.1'))
+
+    browser.destroy()
+  })
+
+  test('address update with cache-flush replaces addresses (RFC 6762 §10.2)', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'Addr Flush',
+      type: '_http._tcp',
+      host: 'addrflush.local',
+      port: 80,
+      addresses: ['192.168.1.1'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+    assert.ok(upEvent.service.addresses.includes('192.168.1.1'))
+
+    // Send an A record WITH cache-flush — should replace, not merge
+    const addrUpdate = dnsPacket.encode({
+      type: 'response',
+      id: 0,
+      flags: dnsPacket.AUTHORITATIVE_ANSWER,
+      answers: [
+        {
+          type: 'A',
+          name: 'addrflush.local',
+          ttl: 120,
+          class: 'IN',
+          flush: true,
+          data: '10.0.0.2',
+        },
+      ],
+    })
+    await advertiser.sendRaw(addrUpdate)
+
+    const updateEvent = await nextEvent(iter)
+    assert.equal(updateEvent.type, 'serviceUpdated')
+    // Old address should be flushed, only new one present
+    assert.deepEqual(updateEvent.service.addresses, ['10.0.0.2'])
 
     browser.destroy()
   })

@@ -659,3 +659,83 @@ describe('Authority section parsing', () => {
     assert.equal(decoded.authorities[0].data, '10.0.0.1')
   })
 })
+
+describe('Multi-packet known-answer splitting', () => {
+  test('small query fits in a single packet', () => {
+    const packets = dns.encodeQueryPackets({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+      answers: [
+        {
+          name: '_http._tcp.local',
+          type: dns.RecordType.PTR,
+          class: 1,
+          cacheFlush: false,
+          ttl: 4500,
+          data: 'Svc1._http._tcp.local',
+        },
+      ],
+    })
+    assert.equal(packets.length, 1)
+
+    const decoded = dnsPacket.decode(packets[0])
+    assert.equal(decoded.questions?.length, 1)
+    assert.equal(decoded.answers?.length, 1)
+  })
+
+  test('large known-answer list is split across multiple packets', () => {
+    // Create enough known answers to exceed ~1472 bytes
+    const answers = []
+    for (let i = 0; i < 50; i++) {
+      answers.push({
+        name: '_http._tcp.local',
+        type: dns.RecordType.PTR,
+        class: 1,
+        cacheFlush: false,
+        ttl: 4500,
+        data: `VeryLongServiceName-${i}-${'x'.repeat(30)}._http._tcp.local`,
+      })
+    }
+
+    const packets = dns.encodeQueryPackets({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+      answers,
+    })
+
+    assert.ok(packets.length > 1, `expected multiple packets but got ${packets.length}`)
+
+    // First packet should have the question and TC bit set
+    const first = dnsPacket.decode(packets[0])
+    assert.equal(first.questions?.length, 1)
+    assert.ok((first.answers?.length ?? 0) > 0, 'first packet should have some answers')
+    // Check TC bit: byte 2, bit 1
+    assert.ok((packets[0][2] & 0x02) !== 0, 'first packet should have TC bit set')
+
+    // Continuation packets should have no questions and no TC bit
+    for (let i = 1; i < packets.length; i++) {
+      const cont = dnsPacket.decode(packets[i])
+      assert.equal(cont.questions?.length, 0, `continuation packet ${i} should have no questions`)
+      assert.ok((cont.answers?.length ?? 0) > 0, `continuation packet ${i} should have answers`)
+      assert.equal(packets[i][2] & 0x02, 0, `continuation packet ${i} should not have TC bit`)
+    }
+
+    // Total answers across all packets should equal original count
+    let totalAnswers = 0
+    for (const pkt of packets) {
+      const decoded = dnsPacket.decode(pkt)
+      totalAnswers += decoded.answers?.length ?? 0
+    }
+    assert.equal(totalAnswers, answers.length)
+
+    // Each packet should fit within the mDNS size limit
+    for (const pkt of packets) {
+      assert.ok(pkt.length <= 1472, `packet size ${pkt.length} exceeds 1472 limit`)
+    }
+  })
+
+  test('query with no answers returns single packet', () => {
+    const packets = dns.encodeQueryPackets({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+    })
+    assert.equal(packets.length, 1)
+  })
+})
