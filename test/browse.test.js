@@ -630,6 +630,93 @@ describe('Service type enumeration', () => {
 
     browser.destroy()
   })
+
+  test('browseAll().first() returns a fully resolved service', async () => {
+    const browser = mdns.browseAll()
+
+    // Announce a type and then an instance
+    await advertiser.announceServiceType('_http._tcp')
+    await delay(500)
+
+    await advertiser.announce({
+      name: 'First Service',
+      type: '_http._tcp',
+      host: 'first.local',
+      port: 4000,
+      addresses: ['10.0.0.10'],
+    })
+
+    const service = await browser.first()
+    assert.equal(service.name, 'First Service')
+    assert.equal(service.host, 'first.local')
+    assert.equal(service.port, 4000)
+    // first() destroys the browser, so it should not accept new events
+  })
+
+  test('browseAll() respects AbortSignal', async () => {
+    const controller = new AbortController()
+    const browser = mdns.browseAll({ signal: controller.signal })
+    const iter = browser[Symbol.asyncIterator]()
+
+    // Abort before any events
+    controller.abort()
+
+    // Iterator should end immediately
+    const result = await iter.next()
+    assert.equal(result.done, true)
+  })
+
+  test('browseAll() with already-aborted signal is immediately destroyed', async () => {
+    const controller = new AbortController()
+    controller.abort()
+
+    const browser = mdns.browseAll({ signal: controller.signal })
+    const iter = browser[Symbol.asyncIterator]()
+
+    const result = await iter.next()
+    assert.equal(result.done, true)
+  })
+
+  test('browseAll() rejects concurrent async iterators', async () => {
+    const browser = mdns.browseAll()
+    // Acquire the first iterator
+    browser[Symbol.asyncIterator]()
+
+    assert.throws(
+      () => browser[Symbol.asyncIterator](),
+      /only supports a single concurrent async iterator/
+    )
+
+    browser.destroy()
+  })
+
+  test('browseAll() duplicate type announcement does not spawn extra sub-browser', async () => {
+    const browser = mdns.browseAll()
+    const iter = browser[Symbol.asyncIterator]()
+
+    // Announce the same type twice
+    await advertiser.announceServiceType('_http._tcp')
+    await advertiser.announceServiceType('_http._tcp')
+    await delay(500)
+
+    // Announce a single service instance
+    await advertiser.announce({
+      name: 'Dedup Test',
+      type: '_http._tcp',
+      host: 'dedup.local',
+      port: 5555,
+      addresses: ['10.0.0.20'],
+    })
+
+    const event = await nextEvent(iter, 5000)
+    assert.equal(event.type, 'serviceUp')
+    assert.equal(event.service.name, 'Dedup Test')
+
+    // Only one service should exist (not duplicated by a second sub-browser)
+    assert.equal(browser.services.size, 1)
+
+    browser.destroy()
+  })
 })
 
 describe('Query behavior', () => {
