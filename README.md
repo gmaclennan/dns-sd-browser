@@ -180,6 +180,20 @@ Browse for all service types on the network.
 
 Returns a `Promise<void>` that resolves when the mDNS socket is bound and ready.
 
+### `mdns.rejoin()`
+
+Re-join multicast groups and restart all browsers after a network interface change (e.g. WiFi reconnect, Ethernet re-plug).
+
+The OS drops multicast group membership when an interface goes down. This method re-establishes it, emits `serviceDown` for all previously discovered services, and restarts querying with the initial rapid schedule so services on the new network are discovered quickly.
+
+```js
+// Call from your application's network change handler
+mdns.rejoin()
+
+// The async iterator will receive serviceDown for all previous services,
+// followed by serviceUp as services are re-discovered on the new network
+```
+
 ### `mdns.destroy()`
 
 Stop all browsers and close the mDNS socket. Returns `Promise<void>`.
@@ -193,6 +207,7 @@ Returned by `browse()` and `browseAll()`. Implements `AsyncIterable<BrowseEvent>
 | `services` | `Map<string, Service>` | Live map of currently discovered services |
 | `first()` | `Promise<Service>` | Resolves with the first `serviceUp` event, then stops the browser |
 | `destroy()` | `void` | Stop browsing and end iteration (called automatically by `first()`, `break`, and `AbortSignal`) |
+| `resetNetwork()` | `void` | Flush services and restart queries (called by `mdns.rejoin()`) |
 | `[Symbol.asyncIterator]()` | `AsyncIterableIterator<BrowseEvent>` | Iterate over discovery events |
 | `[Symbol.asyncDispose]()` | `Promise<void>` | For `await using` support |
 

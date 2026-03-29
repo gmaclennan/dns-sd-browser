@@ -549,6 +549,127 @@ async function hasIPv6() {
   })
 }
 
+// ─── Network rejoin ────────────────────────────────────────────────────
+
+describe('Network rejoin (mdns.rejoin())', () => {
+  /** @type {number} */
+  let port
+  /** @type {DnsSdBrowser} */
+  let mdns
+  /** @type {TestAdvertiser} */
+  let advertiser
+
+  before(async () => {
+    port = await getRandomPort()
+    advertiser = new TestAdvertiser({ port })
+    await advertiser.start()
+  })
+
+  after(async () => {
+    await advertiser.stop()
+  })
+
+  beforeEach(async () => {
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    mdns.browse('_noop._tcp').destroy()
+    await mdns.ready()
+    advertiser.clearQueries()
+  })
+
+  afterEach(async () => {
+    await mdns.destroy()
+  })
+
+  test('flushes existing services as serviceDown and accepts new ones', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    // Announce a service
+    await advertiser.announce({
+      name: 'Rejoin Test',
+      type: '_http._tcp',
+      host: 'rejoin.local',
+      port: 80,
+      addresses: ['10.0.0.1'],
+    })
+
+    const up = await nextEvent(iter)
+    assert.equal(up.type, 'serviceUp')
+    assert.equal(up.service.name, 'Rejoin Test')
+    assert.equal(browser.services.size, 1)
+
+    // Simulate network change — rejoin
+    mdns.rejoin()
+
+    // Should get serviceDown for the old service
+    const down = await nextEvent(iter)
+    assert.equal(down.type, 'serviceDown')
+    assert.equal(down.service.name, 'Rejoin Test')
+    assert.equal(browser.services.size, 0)
+
+    // Re-announce the service (simulates advertiser responding on new network)
+    await advertiser.announce({
+      name: 'Rejoin Test',
+      type: '_http._tcp',
+      host: 'rejoin.local',
+      port: 80,
+      addresses: ['10.0.0.2'],
+    })
+
+    // Should re-discover as a fresh serviceUp
+    const reUp = await nextEvent(iter, 5000)
+    assert.equal(reUp.type, 'serviceUp')
+    assert.equal(reUp.service.name, 'Rejoin Test')
+    assert.deepEqual(reUp.service.addresses, ['10.0.0.2'])
+    assert.equal(browser.services.size, 1)
+
+    browser.destroy()
+  })
+
+  test('rejoin on destroyed browser is a no-op', async () => {
+    const browser = mdns.browse('_http._tcp')
+    browser.destroy()
+
+    // Should not throw
+    mdns.rejoin()
+  })
+
+  test('rejoin before any browse is a no-op', async () => {
+    const fresh = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    // Should not throw
+    fresh.rejoin()
+    await fresh.destroy()
+  })
+
+  test('re-sends initial query with QU bit after rejoin', async () => {
+    const browser = mdns.browse('_http._tcp')
+
+    // Wait for initial query
+    await advertiser.waitForQuery(
+      (q) => (q.questions || []).some((qq) => qq.type === 'PTR'),
+      3000
+    )
+    advertiser.clearQueries()
+
+    // Rejoin — should restart query schedule from the beginning
+    mdns.rejoin()
+
+    // The first query after rejoin should have the QU bit set
+    const query = await advertiser.waitForQuery(
+      (q) => (q.questions || []).some(
+        (qq) => qq.type === 'PTR' && qq.name === '_http._tcp.local'
+      ),
+      3000
+    )
+
+    const question = query.questions?.find((q) => q.type === 'PTR')
+    assert.ok(question, 'should have PTR question')
+    assert.equal(question?.class, 'UNKNOWN_32769', 'first query after rejoin should have QU bit set')
+
+    browser.destroy()
+  })
+})
+
 // When TEST_IPV6=1 is set (e.g. in CI), the IPv6 test must not be skipped.
 // Otherwise, skip gracefully on hosts without IPv6.
 const runIPv6Tests = process.env.TEST_IPV6 === '1' || await hasIPv6()
