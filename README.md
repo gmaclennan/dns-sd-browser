@@ -207,7 +207,16 @@ type BrowseEvent =
 
 #### Service resolution lifecycle
 
-A service is emitted as `serviceUp` as soon as its SRV record is resolved (providing `host` and `port`). Other records may arrive in later packets — the service is progressively filled in via `serviceUpdated` events:
+Discovering a DNS-SD service requires multiple DNS record types, each carrying a different piece of information:
+
+1. **PTR** record — maps a service type (`_http._tcp.local`) to a specific instance name (`My Printer._http._tcp.local`). This is what browsing queries for.
+2. **SRV** record — provides the target hostname and port for that instance (`printer.local:631`).
+3. **TXT** record — carries metadata as key-value pairs (`path=/api`, `version=2`).
+4. **A / AAAA** records — resolve the hostname to IPv4/IPv6 addresses (`192.168.1.50`).
+
+Advertisers typically send all of these in a single response packet with the SRV, TXT, and address records in the "additionals" section. However, some advertisers (including ciao and Avahi) may split them across multiple packets — for example, PTR + SRV in one packet, A/AAAA in another.
+
+This library emits `serviceUp` as soon as the SRV record is resolved (providing `host` and `port`). Other records may arrive in later packets — the service is progressively filled in via `serviceUpdated` events:
 
 | Event | When | What's guaranteed | What may be empty |
 |-------|------|-------------------|-------------------|
