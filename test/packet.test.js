@@ -502,6 +502,49 @@ describe('DNS name encoding/decoding', () => {
     const decoded = dns.decode(buf)
     assert.equal(decoded.answers[0].data, 'My Web Server._http._tcp.local')
   })
+
+  test('accepts a name resolved on the 128th loop iteration (maxJumps off-by-one)', () => {
+    // Build a packet with exactly 128 pointer hops that terminate with a
+    // null byte — previously the check `maxJumps <= 0` would incorrectly
+    // throw when the null terminator was hit on the 128th iteration.
+    // The fix changes it to `maxJumps < 0`.
+    //
+    // We construct a chain of 127 pointer hops, each pointing to the next,
+    // with the final hop landing on the null byte that ends the name.
+    // Layout (offsets from start of packet):
+    //   0..11  : 12-byte DNS header (1 question)
+    //   12..13 : pointer → offset 14   (hop 1)
+    //   14..15 : pointer → offset 16   (hop 2)
+    //   ...
+    //   12 + 2*(N-1) .. 12 + 2*N - 1 : pointer → offset 12 + 2*N (hop N)
+    //   12 + 2*127 = 266 : null byte (end of name)
+    //   267..270 : QTYPE + QCLASS
+
+    const HOPS = 127 // 127 pointer hops + 1 iteration for the null byte = 128 total
+    const nameStart = 12
+    const nullOffset = nameStart + HOPS * 2  // 266
+    const totalLen = nullOffset + 1 + 4      // null byte + QTYPE(2) + QCLASS(2)
+
+    const buf = Buffer.alloc(totalLen)
+    buf.writeUInt16BE(0x8400, 2)   // Flags: QR=1, AA=1
+    buf.writeUInt16BE(1, 4)        // QDCOUNT = 1
+
+    // Build pointer chain: each 2-byte slot points to the next
+    for (let i = 0; i < HOPS; i++) {
+      const nextOffset = nameStart + (i + 1) * 2
+      buf.writeUInt16BE(0xC000 | nextOffset, nameStart + i * 2)
+    }
+    // Final position: null byte (end of name)
+    buf[nullOffset] = 0
+    // QTYPE and QCLASS after the name
+    buf.writeUInt16BE(12, nullOffset + 1)  // PTR
+    buf.writeUInt16BE(1, nullOffset + 3)   // IN
+
+    // Should decode successfully (empty name) without throwing
+    const packet = dns.decode(buf)
+    assert.equal(packet.questions.length, 1)
+    assert.equal(packet.questions[0].name, '') // pointer chain resolves to empty name
+  })
 })
 
 describe('IPv6 encode/decode roundtrip', () => {

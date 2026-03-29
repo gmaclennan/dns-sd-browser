@@ -693,28 +693,41 @@ describe('Service type enumeration', () => {
     // first() destroys the browser, so it should not accept new events
   })
 
-  test('browseAll() respects AbortSignal', async () => {
+  test('browseAll() respects AbortSignal by throwing abort reason', async () => {
     const controller = new AbortController()
     const browser = mdns.browseAll({ signal: controller.signal })
-    const iter = browser[Symbol.asyncIterator]()
+
+    const iterationDone = (async () => {
+      for await (const _event of browser) {
+        // consume
+      }
+    })()
 
     // Abort before any events
     controller.abort()
 
-    // Iterator should end immediately
-    const result = await iter.next()
-    assert.equal(result.done, true)
+    // Iterator should throw the abort reason (matching Node.js convention:
+    // events.on, Readable, setInterval all throw AbortError on abort)
+    await assert.rejects(iterationDone, (err) => {
+      assert.equal(err.name, 'AbortError')
+      return true
+    })
   })
 
-  test('browseAll() with already-aborted signal is immediately destroyed', async () => {
+  test('browseAll() with already-aborted signal throws abort reason immediately', async () => {
     const controller = new AbortController()
     controller.abort()
 
     const browser = mdns.browseAll({ signal: controller.signal })
-    const iter = browser[Symbol.asyncIterator]()
 
-    const result = await iter.next()
-    assert.equal(result.done, true)
+    await assert.rejects(async () => {
+      for await (const _event of browser) {
+        // should throw immediately
+      }
+    }, (err) => {
+      assert.equal(err.name, 'AbortError')
+      return true
+    })
   })
 
   test('browseAll() rejects concurrent async iterators', async () => {
