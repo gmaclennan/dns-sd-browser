@@ -186,6 +186,10 @@ Re-join multicast groups and restart all browsers after a network interface chan
 
 The OS drops multicast group membership when an interface goes down. This method re-establishes it, emits `serviceDown` for all previously discovered services, and restarts querying with the initial rapid schedule so services on the new network are discovered quickly.
 
+Without calling `rejoin()`, previously discovered services would still eventually expire via their TTL timers (typically ~75 minutes), but the socket would not receive any new multicast responses until the multicast group is re-joined.
+
+All previously known services are flushed as `serviceDown` because the browser cannot know whether you reconnected to the same network or a different one. On a different network those services don't exist; on the same network they will be re-discovered within seconds via the restarted query schedule.
+
 ```js
 // Call from your application's network change handler
 mdns.rejoin()
