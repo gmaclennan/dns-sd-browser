@@ -466,14 +466,20 @@ These advertiser quirks are handled gracefully:
 | Split responses (PTR in one packet, SRV in another) | Tracks pending FQDNs, resolves when SRV arrives | Normal mDNS behavior (see [resolution lifecycle](#service-resolution-lifecycle)) |
 | Non-zero rcode in responses | Ignored per RFC 6762 §18.11 | Embedded devices |
 | Records in authority section | Processed alongside answers and additionals | Various |
-| Missing TXT record | Service emitted with empty `txt: {}` | Minimal advertisers |
+| Missing TXT record | Service emitted with empty `txt: {}` | Minimal advertisers, Android NSD |
+| Empty TXT record (single `\x00` byte) | Parsed as empty `txt: {}` per RFC 6763 §6.1 | Android NSD |
+| TXT `key=` for null values | Parsed as empty string (Android writes `key=` instead of boolean `key`) | Android NSD (`setAttribute(key, null)`) |
 | Missing A/AAAA records | Service emitted with empty `addresses: []`, updated when they arrive | Normal mDNS behavior (see [resolution lifecycle](#service-resolution-lifecycle)) |
 | Non-zero packet ID | Accepted (RFC 6762 says ID should be 0, but receivers must not require it) | Legacy implementations |
 | Missing AA (authoritative) bit | Accepted | Various |
 | SRV with port 0 | Accepted as-is | Services indicating "not ready" |
-| Non-standard TTL values | Accepted as-is | Various |
+| Non-standard TTL values | Accepted as-is (e.g. Android NSD uses 75-minute / 4500s TTL) | Various, Android NSD |
 | Cache-flush bit missing | Not required for processing | Some minimal advertisers |
-| Mixed-case DNS names | Case-insensitive matching per RFC 1035 §3.1 | Various |
+| Mixed-case DNS names | Case-insensitive matching per RFC 1035 §3.1 | Various, Android NSD |
+| Shared hostname across devices | Address resolved from same-packet records | Android NSD 7–12 (hardcoded `Android.local`) |
+| Service name conflict suffix | Parentheses and spaces accepted in instance names per RFC 6763 | Android NSD (`"MyService (2)"`) |
+| Service flickering (goodbye + quick re-announce) | 1-second goodbye grace period absorbs flicker | Android NSD |
+| Long hostnames (40+ bytes) | Accepted up to the 253-char DNS name limit | Android NSD 13+ (`Android_<UUID>.local`) |
 
 ### Rejected (strict)
 
