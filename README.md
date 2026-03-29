@@ -405,20 +405,25 @@ These defenses are verified by a dedicated security test suite (`test/security.t
 
 ## When to use this library
 
-**On Windows**, there is no built-in mDNS stack. This library provides a pure-JavaScript DNS-SD browser that works out of the box — no native dependencies, no compilation, no system services to configure. This is the primary use case.
+### With a Node.js advertiser (e.g. ciao)
 
-**On macOS and Linux**, the operating system already includes an mDNS implementation (Bonjour on macOS, Avahi on most Linux distributions). Where possible, it is advisable to use these system mDNS stacks instead of running a second, independent mDNS implementation. As [RFC 6762 §15](https://www.rfc-editor.org/rfc/rfc6762#section-15) explains, running multiple mDNS stacks on the same machine has several drawbacks:
+This library is designed to run alongside a DNS-SD advertiser like [ciao](https://github.com/homebridge/ciao). A browser and advertiser on the same machine coexist without issues — they both bind to port 5353 with `SO_REUSEADDR` and receive all multicast traffic, but they process different packet types (the browser only processes responses, the advertiser only processes queries). The only minor effect is that a unicast response to the browser's initial QU query may be delivered to ciao's socket instead, but the browser automatically retries via multicast on the next query interval.
 
-- **Port 5353 conflicts** — mDNS uses a well-known port. When multiple implementations bind to it with `SO_REUSEADDR`, only one receives unicast responses. This forces all queries to use multicast, increasing network traffic.
+### With a system mDNS stack (Bonjour, Avahi)
+
+**On macOS and Linux**, the operating system already includes a full mDNS implementation (Bonjour on macOS, Avahi on most Linux distributions) that handles both advertising and browsing. Running an additional querier alongside the system stack has some drawbacks, as [RFC 6762 §15](https://www.rfc-editor.org/rfc/rfc6762#section-15) explains:
+
+- **Port 5353 conflicts** — when multiple implementations bind to it with `SO_REUSEADDR`, only one receives unicast responses. This forces all queries to use multicast, increasing network traffic.
 - **Known-answer list corruption** — when multiple queriers send simultaneous queries, responders may incorrectly merge their known-answer lists (which are assembled by source IP address), leading to missed answers.
-- **Resource efficiency** — two independent mDNS stacks consume twice the memory and CPU, which is compounded by running in an interpreted language.
+- **Resource efficiency** — two independent queriers consume extra memory and CPU.
 
-If you need a DNS-SD browser that integrates with the system mDNS on macOS/Linux, consider using native bindings like the [`mdns`](https://www.npmjs.com/package/mdns) package. However, `mdns` requires C++ compilation on install and can be difficult to set up on some platforms — particularly Windows.
+If you need a DNS-SD browser that uses the system mDNS on macOS/Linux, consider native bindings like the [`mdns`](https://www.npmjs.com/package/mdns) package. However, `mdns` requires C++ compilation on install and can be difficult to set up on some platforms — particularly Windows.
 
-This library is best suited for:
+### Best suited for
 
 - **Windows** — no system mDNS available
 - **Cross-platform apps** — needs to work everywhere without native compilation
+- **Pairing with ciao** — browser complement to ciao's advertiser, no native dependencies
 - **Environments where system mDNS is absent** — containers, embedded systems, CI runners
 - **Testing and development** — quick setup, no system dependencies
 
