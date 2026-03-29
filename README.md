@@ -44,9 +44,15 @@ for await (const event of browser) {
 ### Find the first service
 
 ```js
-const service = await mdns.browse('_http._tcp').first()
-console.log(service.name, service.host, service.port)
-// No need to destroy the browser — first() cleans up automatically
+const browser = mdns.browse('_http._tcp', {
+  signal: AbortSignal.timeout(10_000)
+})
+for await (const event of browser) {
+  if (event.type === 'serviceUp') {
+    console.log(event.service.name, event.service.host, event.service.port)
+    break // stops the browser
+  }
+}
 ```
 
 ### Object-form service type
@@ -88,7 +94,7 @@ for await (const event of browser) {
 
 ### Stopping a browser
 
-Breaking out of a `for await` loop, calling `first()`, or aborting via `AbortSignal` all automatically stop the browser — no manual cleanup needed:
+Breaking out of a `for await` loop or aborting via `AbortSignal` automatically stop the browser — no manual cleanup needed:
 
 ```js
 // break / return automatically stops the browser
@@ -98,15 +104,18 @@ for await (const event of browser) {
   }
 }
 
-// first() stops the browser after finding a service
-const service = await mdns.browse('_http._tcp').first()
-
-// AbortSignal stops the browser when aborted
+// AbortSignal throws AbortError when aborted
 const browser = mdns.browse('_http._tcp', {
   signal: AbortSignal.timeout(10_000)
 })
-for await (const event of browser) {
-  console.log(event) // loop exits after 10s
+try {
+  for await (const event of browser) {
+    console.log(event)
+  }
+} catch (err) {
+  if (err.name === 'TimeoutError') {
+    console.log('Browsing timed out')
+  }
 }
 ```
 
@@ -221,9 +230,8 @@ Returned by `browse()` and `browseAll()`. Implements `AsyncIterable<BrowseEvent>
 | Property/Method | Type | Description |
 |-----------------|------|-------------|
 | `services` | `Map<string, Service>` | Live map of currently discovered services |
-| `first()` | `Promise<Service>` | Resolves with the first `serviceUp` event, then stops the browser |
 | `removeService(fqdn)` | `boolean` | Manually remove a service, emitting `serviceDown`. Returns `true` if found. |
-| `destroy()` | `void` | Stop browsing and end iteration (called automatically by `first()`, `break`, and `AbortSignal`) |
+| `destroy()` | `void` | Stop browsing and end iteration (called automatically by `break` and `AbortSignal`) |
 | `resetNetwork()` | `void` | Flush services and restart queries (called by `mdns.rejoin()`) |
 | `[Symbol.asyncIterator]()` | `AsyncIterableIterator<BrowseEvent>` | Iterate over discovery events |
 | `[Symbol.asyncDispose]()` | `Promise<void>` | For `await using` support |
@@ -299,9 +307,9 @@ interface Service {
 
 ## Edge cases and caveats
 
-### `first()` and `break` stop the browser
+### `break` stops the browser
 
-Both `first()` and `break`/`return` from a `for await` loop automatically stop the browser. After either, the browser is destroyed and cannot be iterated again. If you need to find the first service and then keep browsing, consume events without breaking:
+`break` or `return` from a `for await` loop automatically stops the browser — it cannot be iterated again. If you need to find the first service and then keep browsing, consume events without breaking:
 
 ```js
 const browser = mdns.browse('_http._tcp')
@@ -314,16 +322,21 @@ for await (const event of browser) {
 }
 ```
 
-### `first()` without a timeout hangs forever
+### AbortSignal throws, doesn't end cleanly
 
-If no matching service exists on the network, `first()` will wait indefinitely. Always provide an `AbortSignal` with a timeout:
+Aborting via `AbortSignal` throws the abort reason from the `for await` loop, matching the Node.js convention (`events.on`, `Readable`, `setInterval` all throw `AbortError`). Use try/catch to handle it:
 
 ```js
-const browser = mdns.browse('_http._tcp', {
-  signal: AbortSignal.timeout(10_000)
-})
-const service = await browser.first() // throws after 10s if nothing found
+try {
+  for await (const event of browser) { /* ... */ }
+} catch (err) {
+  if (err.name === 'AbortError') {
+    // browsing was cancelled
+  }
+}
 ```
+
+In contrast, `browser.destroy()` ends iteration cleanly (no throw).
 
 ### Single async iterator
 

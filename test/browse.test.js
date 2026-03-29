@@ -664,29 +664,6 @@ describe('API surface', () => {
     await advertiser.stop()
   })
 
-  test('browser.first() resolves with the first discovered service', async () => {
-    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
-    const browser = mdns.browse('_http._tcp')
-    await mdns.ready()
-
-    // Announce after a short delay so .first() is already waiting
-    setTimeout(async () => {
-      await advertiser.announce({
-        name: 'First Service',
-        type: '_http._tcp',
-        host: 'first.local',
-        port: 80,
-        addresses: ['192.168.1.1'],
-      })
-    }, 100)
-
-    const service = await browser.first()
-    assert.equal(service.name, 'First Service')
-
-    browser.destroy()
-    await mdns.destroy()
-  })
-
   test('browser.destroy() ends async iteration', async () => {
     const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     const browser = mdns.browse('_http._tcp')
@@ -767,24 +744,6 @@ describe('API surface', () => {
       assert.equal(err.name, 'TimeoutError')
       return true
     })
-
-    await mdns.destroy()
-  })
-
-  test('first() throws abort reason when signal fires before finding a service', async () => {
-    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
-    const browser = mdns.browse('_http._tcp', {
-      signal: AbortSignal.timeout(200)
-    })
-    await mdns.ready()
-
-    await assert.rejects(
-      () => browser.first(),
-      (err) => {
-        assert.equal(err.name, 'TimeoutError')
-        return true
-      }
-    )
 
     await mdns.destroy()
   })
