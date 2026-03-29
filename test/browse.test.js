@@ -548,8 +548,8 @@ describe('Service type enumeration', () => {
     await mdns.destroy()
   })
 
-  test('browseAll discovers service types via _services._dns-sd._udp.local', async () => {
-    const browser = mdns.browseAll()
+  test('browseTypes discovers service types via _services._dns-sd._udp.local', async () => {
+    const browser = mdns.browseTypes()
     const iter = browser[Symbol.asyncIterator]()
 
     // Send a service type enumeration PTR record (RFC 6763 §9)
@@ -558,6 +558,75 @@ describe('Service type enumeration', () => {
 
     const event = await nextEvent(iter)
     assert.equal(event.type, 'serviceUp')
+
+    browser.destroy()
+  })
+
+  test('browseAll discovers fully resolved service instances across types', async () => {
+    const browser = mdns.browseAll()
+    const iter = browser[Symbol.asyncIterator]()
+
+    // First, announce that _http._tcp exists (type enumeration PTR)
+    await advertiser.announceServiceType('_http._tcp')
+
+    // Give the type browser time to discover and spawn a sub-browser
+    await delay(500)
+
+    // Now announce an actual service instance
+    await advertiser.announce({
+      name: 'All Test',
+      type: '_http._tcp',
+      host: 'alltest.local',
+      port: 9090,
+      addresses: ['10.0.0.5'],
+      txt: { info: 'hello' },
+    })
+
+    const event = await nextEvent(iter, 5000)
+    assert.equal(event.type, 'serviceUp')
+    assert.equal(event.service.name, 'All Test')
+    assert.equal(event.service.host, 'alltest.local')
+    assert.equal(event.service.port, 9090)
+    assert.deepEqual(event.service.addresses, ['10.0.0.5'])
+    assert.equal(event.service.txt.info, 'hello')
+    assert.equal(event.service.type, '_http._tcp')
+
+    // Should also be in the merged services map
+    assert.equal(browser.services.size, 1)
+
+    browser.destroy()
+  })
+
+  test('browseAll discovers instances from multiple service types', async () => {
+    const browser = mdns.browseAll()
+    const iter = browser[Symbol.asyncIterator]()
+
+    // Announce two different service types
+    await advertiser.announceServiceType('_http._tcp')
+    await advertiser.announceServiceType('_ipp._tcp')
+    await delay(500)
+
+    // Announce instances of each type
+    await advertiser.announce({
+      name: 'Web Server',
+      type: '_http._tcp',
+      host: 'web.local',
+      port: 80,
+      addresses: ['10.0.0.1'],
+    })
+
+    await advertiser.announce({
+      name: 'Printer',
+      type: '_ipp._tcp',
+      host: 'printer.local',
+      port: 631,
+      addresses: ['10.0.0.2'],
+    })
+
+    const events = await collectEvents(iter, 2, 5000)
+    const names = events.map((e) => e.service.name).sort()
+    assert.deepEqual(names, ['Printer', 'Web Server'])
+    assert.equal(browser.services.size, 2)
 
     browser.destroy()
   })
@@ -804,6 +873,16 @@ describe('API surface', () => {
 
     assert.throws(
       () => mdns.browseAll(),
+      /has been destroyed/
+    )
+  })
+
+  test('browseTypes() throws after DnsSdBrowser is destroyed', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    await mdns.destroy()
+
+    assert.throws(
+      () => mdns.browseTypes(),
       /has been destroyed/
     )
   })
