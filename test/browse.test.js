@@ -302,6 +302,46 @@ describe('Service removal', () => {
 
     browser.destroy()
   })
+
+  test('re-announcement within 1s cancels pending goodbye (RFC 6762 §10.1)', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    const serviceInfo = {
+      name: 'Rescue Service',
+      type: '_http._tcp',
+      host: 'rescue.local',
+      port: 7070,
+    }
+
+    await advertiser.announce({
+      ...serviceInfo,
+      addresses: ['192.168.1.1'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+
+    // Send goodbye — this schedules removal in 1 second
+    await advertiser.goodbye(serviceInfo)
+
+    // Re-announce within the 1-second window — should cancel the goodbye
+    await delay(200)
+    await advertiser.announce({
+      ...serviceInfo,
+      addresses: ['192.168.1.1'],
+    })
+
+    // Wait past the original 1-second goodbye window
+    await delay(1200)
+
+    // Service should still exist — the goodbye was cancelled
+    assert.equal(browser.services.size, 1)
+    const service = browser.services.values().next().value
+    assert.equal(service.name, 'Rescue Service')
+
+    browser.destroy()
+  })
 })
 
 describe('Service updates', () => {
@@ -747,6 +787,27 @@ describe('Query behavior', () => {
 
   afterEach(async () => {
     await mdns.destroy()
+  })
+
+  test('sends initial PTR query within 20-120ms (RFC 6762 §5.2)', async () => {
+    const startTime = Date.now()
+    const browser = mdns.browse('_http._tcp')
+
+    const query = await advertiser.waitForQuery((q) =>
+      (q.questions || []).some(
+        (question) =>
+          question.type === 'PTR' && question.name === '_http._tcp.local'
+      )
+    )
+
+    const elapsed = Date.now() - startTime
+    assert.ok(query, 'should have received a PTR query')
+    // RFC 6762 §5.2: first query delayed by random 20-120ms
+    // Allow small timing tolerance (15ms lower, 200ms upper for CI jitter)
+    assert.ok(elapsed >= 15, `initial query arrived too quickly (${elapsed}ms < 15ms)`)
+    assert.ok(elapsed < 250, `initial query arrived too slowly (${elapsed}ms > 250ms)`)
+
+    browser.destroy()
   })
 
   test('sends initial PTR query for the service type', async () => {

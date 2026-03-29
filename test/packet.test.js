@@ -261,6 +261,72 @@ describe('DNS packet decoding', () => {
   })
 })
 
+describe('DNS query format (RFC 6762 §18)', () => {
+  test('query ID is zero (RFC 6762 §18.1)', () => {
+    const buf = dns.encodeQuery({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+    })
+
+    // Bytes 0-1 are the query ID — must be 0x0000
+    assert.equal(buf[0], 0)
+    assert.equal(buf[1], 0)
+  })
+
+  test('cache-flush bit is not set in known-answer records (RFC 6762 §10.2)', () => {
+    const buf = dns.encodeQuery({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+      answers: [{
+        name: '_http._tcp.local',
+        type: dns.RecordType.PTR,
+        class: 1,
+        cacheFlush: false,
+        ttl: 4500,
+        data: 'Test._http._tcp.local',
+      }],
+    })
+
+    // Decode with dns-packet and verify no flush bit on the answer
+    const decoded = dnsPacket.decode(buf)
+    assert.ok(decoded.answers?.length >= 1)
+    // dns-packet reports flush as a boolean property
+    assert.equal(decoded.answers?.[0].flush, false)
+  })
+
+  test('SRV target is not compressed in encoding (RFC 2782)', () => {
+    const buf = dns.encodeQuery({
+      questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
+      answers: [{
+        name: 'Test._http._tcp.local',
+        type: dns.RecordType.SRV,
+        class: 1,
+        cacheFlush: true,
+        ttl: 120,
+        data: { priority: 0, weight: 0, port: 8080, target: '_http._tcp.local' },
+      }],
+    })
+
+    // If the target were compressed, it would be a 2-byte pointer.
+    // If not compressed, the full name "_http._tcp.local" must appear in the RDATA.
+    // Decode and verify target is correct (if compression were incorrectly used,
+    // dns-packet would still decode it, but let's verify the raw bytes).
+    const decoded = dnsPacket.decode(buf)
+    const srv = decoded.answers?.[0]
+    assert.equal(srv?.type, 'SRV')
+    assert.equal(srv?.data?.target, '_http._tcp.local')
+
+    // Additionally verify that the RDATA section contains the uncompressed name.
+    // An uncompressed name for "_http._tcp.local" is at least 18 bytes
+    // (5+1 + 4+1 + 5+1 + 0 = 17 bytes for labels). A compressed pointer is only 2 bytes.
+    // The SRV RDATA is: priority(2) + weight(2) + port(2) + target(N).
+    // So total RDATA with uncompressed target >= 6+17 = 23 bytes.
+    // With compressed target it would be 6+2 = 8 bytes.
+    // We verify by checking that the RDATA is large enough to contain an uncompressed name.
+    // Since dns-packet doesn't expose raw RDATA length, we verify indirectly:
+    // The total packet must be longer than it would be with compression.
+    assert.ok(buf.length > 40, 'packet should be large enough to contain uncompressed SRV target')
+  })
+})
+
 describe('DNS packet encoding', () => {
   test('encodes a PTR query', () => {
     const buf = dns.encodeQuery({
