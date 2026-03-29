@@ -78,16 +78,31 @@ for await (const event of browser) {
 }
 ```
 
-### Browse all service types
+### Browse all services
 
-Discovers which service types are advertised on the network via `_services._dns-sd._udp.local` (RFC 6763 &sect;9):
+Discover every service on the network, regardless of type. Automatically enumerates service types and browses each one for fully resolved instances:
 
 ```js
 const browser = mdns.browseAll()
 
 for await (const event of browser) {
   if (event.type === 'serviceUp') {
+    console.log(`[${event.service.type}] ${event.service.name} at ${event.service.host}:${event.service.port}`)
+  }
+}
+```
+
+### Browse service types only
+
+If you only need to know which service types exist (without resolving instances), use `browseTypes()`:
+
+```js
+const browser = mdns.browseTypes()
+
+for await (const event of browser) {
+  if (event.type === 'serviceUp') {
     console.log('Service type found:', event.service.fqdn)
+    // event.service.host/port/addresses will be empty — these are types, not instances
   }
 }
 ```
@@ -195,7 +210,15 @@ Start browsing for a service type. Returns a `ServiceBrowser`.
 
 ### `mdns.browseAll(options?)`
 
-Browse for all service types on the network.
+Browse for all service instances on the network, regardless of type. Automatically enumerates service types and browses each for instances. Returns an `AllServiceBrowser` (same async iterable interface as `ServiceBrowser`).
+
+- **options.signal**: `AbortSignal` to cancel browsing
+
+### `mdns.browseTypes(options?)`
+
+Browse for service types on the network. Returns lightweight `Service` objects representing types — `host`, `port`, and `addresses` will be empty.
+
+- **options.signal**: `AbortSignal` to cancel browsing
 
 ### `mdns.ready()`
 
@@ -225,7 +248,13 @@ Stop all browsers and close the mDNS socket. Returns `Promise<void>`.
 
 ### `ServiceBrowser`
 
-Returned by `browse()` and `browseAll()`. Implements `AsyncIterable<BrowseEvent>`.
+Returned by `browse()` and `browseTypes()`. Implements `AsyncIterable<BrowseEvent>`.
+
+### `AllServiceBrowser`
+
+Returned by `browseAll()`. Same interface as `ServiceBrowser` — the `services` Map contains instances from all discovered types.
+
+Both `ServiceBrowser` and `AllServiceBrowser` share this interface:
 
 | Property/Method | Type | Description |
 |-----------------|------|-------------|
