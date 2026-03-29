@@ -205,10 +205,10 @@ describe('Fix: parseTxtData duplicate handling and edge cases', () => {
     assert.equal(Object.keys(txt).length, 1)
   })
 
-  test('TXT with empty key (=value) is parsed as key="" value="value"', () => {
+  test('TXT string beginning with = (missing key) is silently ignored per RFC 6763 §6.4', () => {
     const encoder = new TextEncoder()
     const { txt } = parseTxtData([encoder.encode('=value')])
-    assert.equal(txt[''], 'value')
+    assert.deepEqual(txt, {})
   })
 
   test('TXT with key=<empty> is parsed as empty string value', () => {
