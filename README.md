@@ -135,6 +135,18 @@ for (const [fqdn, service] of browser.services) {
 }
 ```
 
+### Removing unreachable services
+
+If your application detects that a service is unreachable (e.g. via a health check), you can remove it from the browser without waiting for its TTL to expire:
+
+```js
+browser.removeService('My Printer._http._tcp.local')
+// Emits serviceDown and clears the cached record.
+// If the advertiser re-announces, it will appear as a fresh serviceUp.
+```
+
+This is useful on unreliable networks where devices disappear without sending goodbye packets. Most mDNS advertisers (including Android's NSD) use a 75-minute TTL, so without manual removal, stale services would linger for a long time.
+
 ### Cleanup
 
 Always destroy the `DnsSdBrowser` instance when done to close the mDNS socket. Destroying the `DnsSdBrowser` also stops all its browsers:
@@ -210,6 +222,7 @@ Returned by `browse()` and `browseAll()`. Implements `AsyncIterable<BrowseEvent>
 |-----------------|------|-------------|
 | `services` | `Map<string, Service>` | Live map of currently discovered services |
 | `first()` | `Promise<Service>` | Resolves with the first `serviceUp` event, then stops the browser |
+| `removeService(fqdn)` | `boolean` | Manually remove a service, emitting `serviceDown`. Returns `true` if found. |
 | `destroy()` | `void` | Stop browsing and end iteration (called automatically by `first()`, `break`, and `AbortSignal`) |
 | `resetNetwork()` | `void` | Flush services and restart queries (called by `mdns.rejoin()`) |
 | `[Symbol.asyncIterator]()` | `AsyncIterableIterator<BrowseEvent>` | Iterate over discovery events |

@@ -987,3 +987,105 @@ describe('Event timing', () => {
     await mdns.destroy()
   })
 })
+
+describe('Manual service removal (browser.removeService)', () => {
+  /** @type {number} */
+  let port
+  /** @type {DnsSdBrowser} */
+  let mdns
+  /** @type {TestAdvertiser} */
+  let advertiser
+
+  before(async () => {
+    port = await getRandomPort()
+    advertiser = new TestAdvertiser({ port })
+    await advertiser.start()
+  })
+
+  after(async () => {
+    await advertiser.stop()
+  })
+
+  beforeEach(async () => {
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    mdns.browse('_noop._tcp').destroy()
+    await mdns.ready()
+    advertiser.clearQueries()
+  })
+
+  afterEach(async () => {
+    await mdns.destroy()
+  })
+
+  test('removes a service and emits serviceDown', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'Removable',
+      type: '_http._tcp',
+      host: 'removable.local',
+      port: 80,
+      addresses: ['10.0.0.1'],
+    })
+
+    const up = await nextEvent(iter)
+    assert.equal(up.type, 'serviceUp')
+    assert.equal(browser.services.size, 1)
+
+    const fqdn = up.service.fqdn
+    const removed = browser.removeService(fqdn)
+    assert.equal(removed, true)
+    assert.equal(browser.services.size, 0)
+
+    // Should emit serviceDown via the iterator
+    const down = await nextEvent(iter)
+    assert.equal(down.type, 'serviceDown')
+    assert.equal(down.service.name, 'Removable')
+
+    browser.destroy()
+  })
+
+  test('returns false for unknown FQDN', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const removed = browser.removeService('Nonexistent._http._tcp.local')
+    assert.equal(removed, false)
+    browser.destroy()
+  })
+
+  test('removed service can be re-discovered', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'Comeback',
+      type: '_http._tcp',
+      host: 'comeback.local',
+      port: 80,
+      addresses: ['10.0.0.1'],
+    })
+
+    const up = await nextEvent(iter)
+    assert.equal(up.type, 'serviceUp')
+
+    // Remove it
+    browser.removeService(up.service.fqdn)
+    const down = await nextEvent(iter)
+    assert.equal(down.type, 'serviceDown')
+
+    // Re-announce — should be discovered as a fresh serviceUp
+    await advertiser.announce({
+      name: 'Comeback',
+      type: '_http._tcp',
+      host: 'comeback.local',
+      port: 80,
+      addresses: ['10.0.0.1'],
+    })
+
+    const reUp = await nextEvent(iter)
+    assert.equal(reUp.type, 'serviceUp')
+    assert.equal(reUp.service.name, 'Comeback')
+
+    browser.destroy()
+  })
+})
