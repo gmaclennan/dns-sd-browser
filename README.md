@@ -214,7 +214,7 @@ Discovering a DNS-SD service requires multiple DNS record types, each carrying a
 3. **TXT** record — carries metadata as key-value pairs (`path=/api`, `version=2`).
 4. **A / AAAA** records — resolve the hostname to IPv4/IPv6 addresses (`192.168.1.50`).
 
-Advertisers typically send all of these in a single response packet with the SRV, TXT, and address records in the "additionals" section. However, some advertisers (including ciao and Avahi) may split them across multiple packets — for example, PTR + SRV in one packet, A/AAAA in another.
+Advertisers typically send all of these in a single response packet with the SRV, TXT, and address records in the "additionals" section. However, records can arrive in separate packets under normal conditions — for example, when a host's address changes (DHCP renewal), the advertiser sends just the new A record without re-sending the PTR or SRV. Records can also be split when the response exceeds the 1472-byte mDNS packet limit, or when different records have independent TTLs and are refreshed at different times.
 
 This library emits `serviceUp` as soon as the SRV record is resolved (providing `host` and `port`). Other records may arrive in later packets — the service is progressively filled in via `serviceUpdated` events:
 
@@ -389,11 +389,11 @@ These advertiser quirks are handled gracefully:
 
 | Quirk | Behavior | Seen in |
 |---|---|---|
-| Split responses (PTR in one packet, SRV in another) | Tracks pending FQDNs, resolves when SRV arrives | ciao, avahi |
+| Split responses (PTR in one packet, SRV in another) | Tracks pending FQDNs, resolves when SRV arrives | Normal mDNS behavior (see [resolution lifecycle](#service-resolution-lifecycle)) |
 | Non-zero rcode in responses | Ignored per RFC 6762 §18.11 | Embedded devices |
 | Records in authority section | Processed alongside answers and additionals | Various |
 | Missing TXT record | Service emitted with empty `txt: {}` | Minimal advertisers |
-| Missing A/AAAA records | Service emitted with empty `addresses: []` | Split responses |
+| Missing A/AAAA records | Service emitted with empty `addresses: []`, updated when they arrive | Normal mDNS behavior (see [resolution lifecycle](#service-resolution-lifecycle)) |
 | Non-zero packet ID | Accepted (RFC 6762 says ID should be 0, but receivers must not require it) | Legacy implementations |
 | Missing AA (authoritative) bit | Accepted | Various |
 | SRV with port 0 | Accepted as-is | Services indicating "not ready" |
