@@ -309,6 +309,23 @@ export class TestAdvertiser {
   }
 
   /**
+   * Send an mDNS query packet (QR=0) for duplicate question suppression testing.
+   * @param {object} options
+   * @param {dnsPacket.Question[]} options.questions
+   * @param {dnsPacket.Answer[]} [options.answers] - Known-Answer section
+   */
+  async sendQuery({ questions, answers = [] }) {
+    const packet = dnsPacket.encode({
+      type: 'query',
+      id: 0,
+      flags: 0,
+      questions,
+      answers,
+    })
+    await this.#send(packet)
+  }
+
+  /**
    * Wait until a query matching the predicate is received.
    * @param {(query: dnsPacket.Packet) => boolean} predicate
    * @param {number} [timeoutMs=3000]

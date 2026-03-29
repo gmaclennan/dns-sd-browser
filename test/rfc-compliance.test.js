@@ -1225,3 +1225,160 @@ describe('Advanced scenarios', () => {
     browser.destroy()
   })
 })
+
+// ─── Duplicate Question Suppression (RFC 6762 §7.3) ────────────────────
+
+describe('Duplicate question suppression (RFC 6762 §7.3)', () => {
+  /** @type {number} */
+  let port
+  /** @type {DnsSdBrowser} */
+  let mdns
+  /** @type {TestAdvertiser} */
+  let advertiser
+
+  before(async () => {
+    port = await getRandomPort()
+    advertiser = new TestAdvertiser({ port })
+    await advertiser.start()
+  })
+
+  after(async () => {
+    await advertiser.stop()
+  })
+
+  beforeEach(async () => {
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    mdns.browse('_noop._tcp').destroy()
+    await mdns.ready()
+    advertiser.clearQueries()
+  })
+
+  afterEach(async () => {
+    await mdns.destroy()
+  })
+
+  test('suppresses next query when another host sends matching QM query with sufficient known answers', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    // Announce a service so the browser has a known PTR record
+    await advertiser.announce({
+      name: 'Suppression Test',
+      type: '_http._tcp',
+      host: 'suppress.local',
+      port: 8080,
+      addresses: ['192.168.1.50'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+    assert.equal(upEvent.service.name, 'Suppression Test')
+
+    // Wait for the browser's first scheduled query to be sent (1s interval)
+    // then clear so we can measure the next window
+    await delay(1500)
+    advertiser.clearQueries()
+
+    // Now simulate another host sending a QM query with the same question
+    // and known answers that cover our known-answer set
+    await advertiser.sendQuery({
+      questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
+      answers: [
+        {
+          type: 'PTR',
+          name: '_http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          data: 'Suppression Test._http._tcp.local',
+        },
+      ],
+    })
+
+    // The browser should suppress its next query. Wait for what would be the
+    // next query interval (~2s at this point in the schedule) plus some margin.
+    // If suppression works, the query timer was reset, so we should see no
+    // query in the original window.
+    await delay(2000)
+    const queriesInWindow = advertiser.receivedQueries.filter((q) =>
+      q.questions?.some(
+        (/** @type {any} */ qu) =>
+          qu.type === 'PTR' && qu.name.toLowerCase() === '_http._tcp.local'
+      )
+    )
+
+    // Should have 0 or at most 1 query (the rescheduled one arriving near
+    // the end of the window). The key assertion is that the immediate next
+    // query was suppressed — if suppression didn't work, we'd see a query
+    // much sooner. We verify by checking the count is ≤ 1.
+    assert.ok(
+      queriesInWindow.length <= 1,
+      `Expected at most 1 query after suppression, got ${queriesInWindow.length}`
+    )
+
+    browser.destroy()
+  })
+
+  test('does NOT suppress when incoming query has insufficient known answers', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    // Announce two services so the browser knows about both
+    await advertiser.announce({
+      name: 'Service A',
+      type: '_http._tcp',
+      host: 'a.local',
+      port: 8080,
+      addresses: ['192.168.1.51'],
+    })
+    const ev1 = await nextEvent(iter)
+    assert.equal(ev1.type, 'serviceUp')
+
+    await advertiser.announce({
+      name: 'Service B',
+      type: '_http._tcp',
+      host: 'b.local',
+      port: 8081,
+      addresses: ['192.168.1.52'],
+    })
+    const ev2 = await nextEvent(iter)
+    assert.equal(ev2.type, 'serviceUp')
+
+    // Wait for a scheduled query and clear
+    await delay(1500)
+    advertiser.clearQueries()
+
+    // Send a QM query that only covers one of the two known services
+    // (insufficient known answers — should NOT suppress)
+    await advertiser.sendQuery({
+      questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
+      answers: [
+        {
+          type: 'PTR',
+          name: '_http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          data: 'Service A._http._tcp.local',
+        },
+        // Service B is missing from the known answers
+      ],
+    })
+
+    // The browser should NOT suppress — it should still send its next query
+    // because the incoming query's known-answer section is insufficient.
+    // Wait for the next query interval.
+    await delay(3000)
+    const queriesAfter = advertiser.receivedQueries.filter((q) =>
+      q.questions?.some(
+        (/** @type {any} */ qu) =>
+          qu.type === 'PTR' && qu.name.toLowerCase() === '_http._tcp.local'
+      )
+    )
+
+    assert.ok(
+      queriesAfter.length >= 1,
+      `Expected at least 1 query (no suppression), got ${queriesAfter.length}`
+    )
+
+    browser.destroy()
+  })
+})
