@@ -207,7 +207,7 @@ describe('Cache and TTL management', () => {
     browser.destroy()
   })
 
-  test('TXT record with TTL=0 does not update the service', async () => {
+  test('TXT goodbye (TTL=0) is silently ignored — service remains unchanged', async () => {
     const browser = mdns.browse('_http._tcp')
     const iter = browser[Symbol.asyncIterator]()
 
