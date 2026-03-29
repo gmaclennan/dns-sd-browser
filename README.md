@@ -1,6 +1,6 @@
 # dns-sd-browser
 
-Spec-compliant [DNS-SD](https://www.rfc-editor.org/rfc/rfc6763) browser over [Multicast DNS](https://www.rfc-editor.org/rfc/rfc6762) for Node.js. Designed as a complementary browser to the [ciao](https://github.com/homebridge/ciao) DNS-SD advertiser.
+Spec-compliant [DNS-SD](https://www.rfc-editor.org/rfc/rfc6763) browser over [Multicast DNS](https://www.rfc-editor.org/rfc/rfc6762) for Node.js.
 
 - **Async iterator API** — modern, backpressure-aware, no forgotten error handlers
 - **Zero dependencies** — pure JavaScript, no native bindings
@@ -518,6 +518,35 @@ The DNS packet parser and service resolution logic are hardened against attack p
 
 These defenses are verified by a dedicated security test suite (`test/security.test.js`) that exercises each attack pattern directly.
 
+## Comparison with other libraries
+
+There are several mDNS/DNS-SD libraries available for Node.js, each with different trade-offs. Here's how they compare:
+
+| | dns-sd-browser | [bonjour-service](https://github.com/onlxltd/bonjour-service) | [multicast-dns](https://github.com/mafintosh/multicast-dns) | [dnssd](https://github.com/DeMille/dnssd.js) | [mdns](https://github.com/agnat/node_mdns) |
+|---|---|---|---|---|---|
+| **Browse** | Yes | Yes | Manual | Yes | Yes |
+| **Advertise** | No | Yes | Manual | Yes | Yes |
+| **API style** | Async iterator | EventEmitter | EventEmitter | EventEmitter | EventEmitter |
+| **Dependencies** | 0 | 2 (`multicast-dns`, `fast-deep-equal`) | 2 (`dns-packet`, `thunky`) | 0 | Native (C++) |
+| **TypeScript** | JSDoc types | Written in TS | `@types` available | No | No |
+| **Known-answer suppression** | Yes | No | N/A (low-level) | Yes | System-level |
+| **TTL expiration** | Yes | No | N/A (low-level) | Yes | System-level |
+| **Continuous querying** | Yes (exponential backoff) | Yes (fixed interval) | N/A (low-level) | Yes | System-level |
+| **Node.js** | >= 22 | Any | Any | >= 6 | Any (with native toolchain) |
+| **Last published** | New | Nov 2024 | May 2022 | May 2018 | Nov 2020 |
+
+### Notes
+
+**[bonjour-service](https://github.com/onlxltd/bonjour-service)** is the most widely used pure-JS option. It provides both browsing and advertising with a simple EventEmitter API. It's a solid, well-maintained choice — especially if you need an advertiser too. However, it doesn't implement known-answer suppression or TTL-based cache expiration, which can lead to duplicate responses and stale services on busy networks.
+
+**[multicast-dns](https://github.com/mafintosh/multicast-dns)** is a low-level mDNS library (~14M weekly downloads, mostly as a transitive dependency). It handles DNS packet encoding/decoding and multicast transport, but doesn't implement DNS-SD service browsing — you'd need to build that yourself on top. Great if you need raw mDNS control.
+
+**[dnssd](https://github.com/DeMille/dnssd.js)** has the most complete RFC implementation among the pure-JS alternatives, with both browsing and advertising, zero dependencies, and proper known-answer suppression. Unfortunately it hasn't been updated since 2018 and is effectively unmaintained.
+
+**[mdns](https://github.com/agnat/node_mdns)** uses native bindings to your OS's mDNS stack (Bonjour/Avahi), giving it the best conformance and performance. The downside is that it requires C++ compilation on install, platform-specific system libraries, and it hasn't been updated since 2020. See the [system mDNS section](#with-a-system-mdns-stack-bonjour-avahi) below for when this trade-off makes sense.
+
+**dns-sd-browser** focuses on doing one thing well: browsing. It has no dependencies and implements the querier side of the RFCs thoroughly (known-answer suppression, TTL expiration, cache-flush handling, continuous querying with exponential backoff). The async iterator API avoids common EventEmitter pitfalls like forgotten error handlers. The trade-offs are that it's new and less battle-tested than the alternatives, it requires Node.js 22+, and it only browses — you'll need a separate library if you also need to advertise services.
+
 ## When to use this library
 
 ### With a Node.js advertiser (e.g. ciao)
@@ -541,6 +570,10 @@ If you need a DNS-SD browser that uses the system mDNS on macOS/Linux, consider 
 - **Pairing with ciao** — browser complement to ciao's advertiser, no native dependencies
 - **Environments where system mDNS is absent** — containers, embedded systems, CI runners
 - **Testing and development** — quick setup, no system dependencies
+
+## Recommended advertiser
+
+This library only browses — it does not advertise services. If you need to publish services on the local network, [@homebridge/ciao](https://github.com/homebridge/ciao) is a well-tested, actively maintained DNS-SD advertiser written in TypeScript. It is RFC 6762/6763 compliant, passes Apple's Bonjour Conformance Test, and is proven in production as part of the Homebridge ecosystem. A browser and advertiser on the same machine coexist well — see [With a Node.js advertiser](#with-a-nodejs-advertiser-eg-ciao) for details.
 
 ## License
 
