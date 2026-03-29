@@ -554,7 +554,7 @@ async function hasIPv6() {
 const runIPv6Tests = process.env.TEST_IPV6 === '1' || await hasIPv6()
 
 describe('IPv6 multicast support', () => {
-  test('transport starts successfully even when IPv6 is unavailable', async () => {
+  test('transport starts successfully regardless of IPv6 availability', async () => {
     // This test validates that the IPv6 socket failure doesn't prevent startup.
     // On systems without IPv6, the transport should fall back to IPv4 only.
     const port = await getRandomPort()

@@ -574,6 +574,8 @@ describe('DNS record encoding', () => {
 
     const decoded = dnsPacket.decode(buf)
     assert.equal(decoded.questions?.[0].name, '_http._tcp.local')
+    // QU bit (high bit of class field) should be set — dns-packet decodes this as 'UNKNOWN_32769'
+    assert.equal(decoded.questions?.[0].class, 'UNKNOWN_32769', 'QU bit should be set in class field')
   })
 })
 

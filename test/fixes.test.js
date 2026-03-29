@@ -181,7 +181,7 @@ describe('Fix: decodeName throws on malformed input', () => {
   })
 })
 
-describe('Fix: parseTxtData uses O(n) duplicate detection', () => {
+describe('Fix: parseTxtData duplicate handling and edge cases', () => {
   test('first key wins for case-insensitive duplicates', () => {
     const encoder = new TextEncoder()
     const entries = [
@@ -331,7 +331,7 @@ describe('Fix: single-consumer async iterator enforcement', () => {
     browser.destroy()
   })
 
-  test('allows a new iterator after the previous one ends', async () => {
+  test('allows a new iterator after the previous one returns done', async () => {
     const browser = mdns.browse('_http._tcp')
     const iter1 = browser[Symbol.asyncIterator]()
 
