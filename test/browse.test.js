@@ -701,9 +701,11 @@ describe('Service type enumeration', () => {
     // Abort before any events
     controller.abort()
 
-    // Iterator should end immediately
-    const result = await iter.next()
-    assert.equal(result.done, true)
+    // AbortSignal should throw, matching Node.js convention
+    await assert.rejects(iter.next(), (err) => {
+      assert.equal(err.name, 'AbortError')
+      return true
+    })
   })
 
   test('browseAll() with already-aborted signal is immediately destroyed', async () => {
@@ -713,8 +715,11 @@ describe('Service type enumeration', () => {
     const browser = mdns.browseAll({ signal: controller.signal })
     const iter = browser[Symbol.asyncIterator]()
 
-    const result = await iter.next()
-    assert.equal(result.done, true)
+    // AbortSignal should throw, matching Node.js convention
+    await assert.rejects(iter.next(), (err) => {
+      assert.equal(err.name, 'AbortError')
+      return true
+    })
   })
 
   test('browseAll() rejects concurrent async iterators', async () => {

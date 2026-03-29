@@ -164,6 +164,40 @@ describe('Fix: decodeName throws on malformed input', () => {
     assert.throws(() => dns.decode(buf), /too many compression pointers/)
   })
 
+  test('does not throw on 127 pointer hops followed by a null terminator', () => {
+    // 127 pointer hops + null terminator = 128 iterations of the decode loop.
+    // Each pointer consumes one iteration (with continue), then the null
+    // terminator consumes the 128th iteration and breaks. This exercises the
+    // exact boundary of the maxJumps counter.
+    const chainLen = 127
+    const dataOffset = 12 + chainLen * 2 // where the null terminator lives
+    const bufLen = dataOffset + 1 + 4    // null + QTYPE + QCLASS
+    const buf = Buffer.alloc(bufLen)
+
+    buf.writeUInt16BE(0, 0)       // ID
+    buf.writeUInt16BE(0x8400, 2)  // Flags: QR=1, AA=1
+    buf.writeUInt16BE(1, 4)       // QDCOUNT = 1
+    buf.writeUInt16BE(0, 6)
+    buf.writeUInt16BE(0, 8)
+    buf.writeUInt16BE(0, 10)
+
+    // Write 127 pointers: offset 12 -> 14 -> 16 -> ... -> dataOffset
+    for (let i = 0; i < chainLen; i++) {
+      const off = 12 + i * 2
+      const target = (i < chainLen - 1) ? 12 + (i + 1) * 2 : dataOffset
+      buf.writeUInt16BE(0xC000 | target, off)
+    }
+
+    // At dataOffset: null terminator (root name ".")
+    buf[dataOffset] = 0
+    buf.writeUInt16BE(1, dataOffset + 1) // QTYPE = A
+    buf.writeUInt16BE(1, dataOffset + 3) // QCLASS = IN
+
+    // Should decode successfully — not throw
+    const pkt = dns.decode(buf)
+    assert.equal(pkt.questions[0].name, '')
+  })
+
   test('throws on oversized label length', () => {
     const buf = Buffer.alloc(30)
     buf.writeUInt16BE(0, 0)       // ID
