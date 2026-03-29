@@ -717,7 +717,7 @@ describe('API surface', () => {
     await mdns.destroy()
   })
 
-  test('AbortSignal cancels browsing', async () => {
+  test('AbortSignal cancels browsing by throwing abort reason', async () => {
     const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     const ac = new AbortController()
     const browser = mdns.browse('_http._tcp', { signal: ac.signal })
@@ -740,9 +740,71 @@ describe('API surface', () => {
 
     await delay(500)
     ac.abort()
-    await iterationDone
+
+    // AbortSignal should throw, matching Node.js convention
+    // (events.on, Readable, setInterval all throw AbortError)
+    await assert.rejects(iterationDone, (err) => {
+      assert.equal(err.name, 'AbortError')
+      return true
+    })
 
     assert.ok(events.length >= 1)
+    await mdns.destroy()
+  })
+
+  test('AbortSignal.timeout() throws AbortError on expiry', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    const browser = mdns.browse('_http._tcp', {
+      signal: AbortSignal.timeout(200)
+    })
+    await mdns.ready()
+
+    await assert.rejects(async () => {
+      for await (const _event of browser) {
+        // No services announced — will timeout
+      }
+    }, (err) => {
+      assert.equal(err.name, 'TimeoutError')
+      return true
+    })
+
+    await mdns.destroy()
+  })
+
+  test('first() throws abort reason when signal fires before finding a service', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    const browser = mdns.browse('_http._tcp', {
+      signal: AbortSignal.timeout(200)
+    })
+    await mdns.ready()
+
+    await assert.rejects(
+      () => browser.first(),
+      (err) => {
+        assert.equal(err.name, 'TimeoutError')
+        return true
+      }
+    )
+
+    await mdns.destroy()
+  })
+
+  test('destroy() without abort ends iteration cleanly (no throw)', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    const browser = mdns.browse('_http._tcp')
+    await mdns.ready()
+
+    const iterationDone = (async () => {
+      for await (const _event of browser) {
+        // consume
+      }
+    })()
+
+    await delay(100)
+    browser.destroy()
+
+    // Should resolve without throwing
+    await iterationDone
     await mdns.destroy()
   })
 
