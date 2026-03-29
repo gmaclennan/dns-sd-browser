@@ -1225,3 +1225,143 @@ describe('Advanced scenarios', () => {
     browser.destroy()
   })
 })
+
+// ─── Passive Observation of Failures / POOF (RFC 6762 §10.5) ─────────
+
+describe('Passive Observation of Failures (POOF) — RFC 6762 §10.5', () => {
+  /** @type {number} */
+  let port
+  /** @type {DnsSdBrowser} */
+  let mdns
+  /** @type {TestAdvertiser} */
+  let advertiser
+
+  // Use short timeouts for testing
+  const POOF_TIMEOUT_MS = 3000
+  const POOF_RESPONSE_WAIT_MS = 500
+
+  before(async () => {
+    port = await getRandomPort()
+    advertiser = new TestAdvertiser({ port })
+    await advertiser.start()
+  })
+
+  after(async () => {
+    await advertiser.stop()
+  })
+
+  beforeEach(async () => {
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    mdns.browse('_noop._tcp').destroy()
+    await mdns.ready()
+    advertiser.clearQueries()
+  })
+
+  afterEach(async () => {
+    await mdns.destroy()
+  })
+
+  test('flushes cached record after 2+ unanswered queries within timeout window', async () => {
+    const browser = mdns.browse('_http._tcp', {
+      poofTimeoutMs: POOF_TIMEOUT_MS,
+      poofResponseWaitMs: POOF_RESPONSE_WAIT_MS,
+    })
+    const iter = browser[Symbol.asyncIterator]()
+
+    // Announce a service so it gets cached
+    await advertiser.announce({
+      name: 'POOF Target',
+      type: '_http._tcp',
+      host: 'poof.local',
+      port: 8080,
+      addresses: ['192.168.1.50'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+    assert.equal(upEvent.service.name, 'POOF Target')
+    assert.equal(browser.services.size, 1)
+
+    // Simulate another host querying for the same service type (query 1)
+    await advertiser.sendQueryPacket('_http._tcp.local', 'PTR')
+
+    // Wait for response-wait timer to expire (no response sent)
+    await delay(POOF_RESPONSE_WAIT_MS + 200)
+
+    // Service should still be present after only 1 unanswered query
+    assert.equal(browser.services.size, 1)
+
+    // Simulate another host querying again (query 2)
+    await advertiser.sendQueryPacket('_http._tcp.local', 'PTR')
+
+    // Wait for response-wait timer to expire — should trigger POOF flush
+    await delay(POOF_RESPONSE_WAIT_MS + 200)
+
+    // The cached record should now be flushed
+    const downEvent = await nextEvent(iter, 2000)
+    assert.equal(downEvent.type, 'serviceDown')
+    assert.equal(downEvent.service.name, 'POOF Target')
+    assert.equal(browser.services.size, 0)
+
+    browser.destroy()
+  })
+
+  test('does NOT flush record when a response is seen after the query', async () => {
+    const browser = mdns.browse('_http._tcp', {
+      poofTimeoutMs: POOF_TIMEOUT_MS,
+      poofResponseWaitMs: POOF_RESPONSE_WAIT_MS,
+    })
+    const iter = browser[Symbol.asyncIterator]()
+
+    // Announce a service so it gets cached
+    await advertiser.announce({
+      name: 'POOF Survivor',
+      type: '_http._tcp',
+      host: 'survivor.local',
+      port: 9090,
+      addresses: ['192.168.1.60'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+    assert.equal(upEvent.service.name, 'POOF Survivor')
+
+    // Simulate another host querying (query 1)
+    await advertiser.sendQueryPacket('_http._tcp.local', 'PTR')
+
+    // Respond with the expected PTR record before the response-wait expires
+    await delay(100)
+    await advertiser.announce({
+      name: 'POOF Survivor',
+      type: '_http._tcp',
+      host: 'survivor.local',
+      port: 9090,
+      addresses: ['192.168.1.60'],
+    })
+
+    // Wait longer than the response-wait timer
+    await delay(POOF_RESPONSE_WAIT_MS + 200)
+
+    // Simulate another host querying (query 2)
+    await advertiser.sendQueryPacket('_http._tcp.local', 'PTR')
+
+    // Respond again before the timer expires
+    await delay(100)
+    await advertiser.announce({
+      name: 'POOF Survivor',
+      type: '_http._tcp',
+      host: 'survivor.local',
+      port: 9090,
+      addresses: ['192.168.1.60'],
+    })
+
+    // Wait for everything to settle
+    await delay(POOF_RESPONSE_WAIT_MS + 200)
+
+    // The service should still be present — responses were observed
+    assert.equal(browser.services.size, 1)
+    assert.ok(browser.services.has('POOF Survivor._http._tcp.local'))
+
+    browser.destroy()
+  })
+})
