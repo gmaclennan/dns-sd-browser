@@ -205,6 +205,38 @@ type BrowseEvent =
   | { type: 'serviceUpdated', service: Service }
 ```
 
+#### Service resolution lifecycle
+
+A service is emitted as `serviceUp` as soon as its SRV record is resolved (providing `host` and `port`). Other records may arrive in later packets — the service is progressively filled in via `serviceUpdated` events:
+
+| Event | When | What's guaranteed | What may be empty |
+|-------|------|-------------------|-------------------|
+| `serviceUp` | SRV record resolved | `name`, `host`, `port`, `fqdn` | `addresses`, `txt`, `subtypes` |
+| `serviceUpdated` | Any field changed | All fields reflect current state | — |
+| `serviceDown` | TTL expired or goodbye | Snapshot at time of removal | — |
+
+Each service emits exactly one `serviceUp`, followed by zero or more `serviceUpdated`, and at most one `serviceDown`. You will never receive a second `serviceUp` for the same service.
+
+This matters when A/AAAA records arrive in a separate packet from the SRV (a split response). The `serviceUp` will have `addresses: []`, and a `serviceUpdated` follows shortly after with the addresses populated:
+
+```js
+const resolved = new Map()
+
+for await (const event of browser) {
+  if (event.type === 'serviceDown') {
+    resolved.delete(event.service.fqdn)
+    continue
+  }
+  const svc = event.service
+  if (svc.addresses.length > 0 && !resolved.has(svc.fqdn)) {
+    resolved.set(svc.fqdn, svc)
+    console.log(`Ready: ${svc.name} at ${svc.addresses[0]}:${svc.port}`)
+  }
+}
+```
+
+If you only need a service once it has addresses, you can also poll the `services` Map — it always reflects the latest state regardless of which events you've consumed.
+
 ### `Service`
 
 ```ts
