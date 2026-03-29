@@ -407,7 +407,7 @@ These defenses are verified by a dedicated security test suite (`test/security.t
 
 ### With a Node.js advertiser (e.g. ciao)
 
-This library is designed to run alongside a DNS-SD advertiser like [ciao](https://github.com/homebridge/ciao). A browser and advertiser on the same machine coexist without issues — they both bind to port 5353 with `SO_REUSEADDR` and receive all multicast traffic, but they process different packet types (the browser only processes responses, the advertiser only processes queries). The only minor effect is that a unicast response to the browser's initial QU query may be delivered to ciao's socket instead, but the browser automatically retries via multicast on the next query interval.
+This library is designed to run alongside a DNS-SD advertiser like [ciao](https://github.com/homebridge/ciao). A browser and advertiser on the same machine coexist well — they both bind to port 5353 with `SO_REUSEADDR` and receive all multicast traffic. This browser only sends queries and processes responses, while ciao sends responses and processes queries (it also monitors responses for conflict detection, but a browse-only module never announces records, so there is nothing to conflict with). The two RFC 6762 §15 concerns that apply to multiple *queriers* — known-answer list corruption and duplicated queries — don't apply here since only one side is querying. The only minor effect is that a unicast response to the browser's initial QU query may be delivered to ciao's socket instead, but the browser automatically retries via multicast on the next query interval.
 
 ### With a system mDNS stack (Bonjour, Avahi)
 
