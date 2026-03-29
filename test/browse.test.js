@@ -664,29 +664,6 @@ describe('API surface', () => {
     await advertiser.stop()
   })
 
-  test('browser.first() resolves with the first discovered service', async () => {
-    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
-    const browser = mdns.browse('_http._tcp')
-    await mdns.ready()
-
-    // Announce after a short delay so .first() is already waiting
-    setTimeout(async () => {
-      await advertiser.announce({
-        name: 'First Service',
-        type: '_http._tcp',
-        host: 'first.local',
-        port: 80,
-        addresses: ['192.168.1.1'],
-      })
-    }, 100)
-
-    const service = await browser.first()
-    assert.equal(service.name, 'First Service')
-
-    browser.destroy()
-    await mdns.destroy()
-  })
-
   test('browser.destroy() ends async iteration', async () => {
     const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     const browser = mdns.browse('_http._tcp')
@@ -717,7 +694,7 @@ describe('API surface', () => {
     await mdns.destroy()
   })
 
-  test('AbortSignal cancels browsing', async () => {
+  test('AbortSignal cancels browsing by throwing abort reason', async () => {
     const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     const ac = new AbortController()
     const browser = mdns.browse('_http._tcp', { signal: ac.signal })
@@ -740,9 +717,53 @@ describe('API surface', () => {
 
     await delay(500)
     ac.abort()
-    await iterationDone
+
+    // AbortSignal should throw, matching Node.js convention
+    // (events.on, Readable, setInterval all throw AbortError)
+    await assert.rejects(iterationDone, (err) => {
+      assert.equal(err.name, 'AbortError')
+      return true
+    })
 
     assert.ok(events.length >= 1)
+    await mdns.destroy()
+  })
+
+  test('AbortSignal.timeout() throws AbortError on expiry', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    const browser = mdns.browse('_http._tcp', {
+      signal: AbortSignal.timeout(200)
+    })
+    await mdns.ready()
+
+    await assert.rejects(async () => {
+      for await (const _event of browser) {
+        // No services announced — will timeout
+      }
+    }, (err) => {
+      assert.equal(err.name, 'TimeoutError')
+      return true
+    })
+
+    await mdns.destroy()
+  })
+
+  test('destroy() without abort ends iteration cleanly (no throw)', async () => {
+    const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    const browser = mdns.browse('_http._tcp')
+    await mdns.ready()
+
+    const iterationDone = (async () => {
+      for await (const _event of browser) {
+        // consume
+      }
+    })()
+
+    await delay(100)
+    browser.destroy()
+
+    // Should resolve without throwing
+    await iterationDone
     await mdns.destroy()
   })
 
@@ -985,5 +1006,107 @@ describe('Event timing', () => {
 
     browser.destroy()
     await mdns.destroy()
+  })
+})
+
+describe('Manual service removal (browser.removeService)', () => {
+  /** @type {number} */
+  let port
+  /** @type {DnsSdBrowser} */
+  let mdns
+  /** @type {TestAdvertiser} */
+  let advertiser
+
+  before(async () => {
+    port = await getRandomPort()
+    advertiser = new TestAdvertiser({ port })
+    await advertiser.start()
+  })
+
+  after(async () => {
+    await advertiser.stop()
+  })
+
+  beforeEach(async () => {
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    mdns.browse('_noop._tcp').destroy()
+    await mdns.ready()
+    advertiser.clearQueries()
+  })
+
+  afterEach(async () => {
+    await mdns.destroy()
+  })
+
+  test('removes a service and emits serviceDown', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'Removable',
+      type: '_http._tcp',
+      host: 'removable.local',
+      port: 80,
+      addresses: ['10.0.0.1'],
+    })
+
+    const up = await nextEvent(iter)
+    assert.equal(up.type, 'serviceUp')
+    assert.equal(browser.services.size, 1)
+
+    const fqdn = up.service.fqdn
+    const removed = browser.removeService(fqdn)
+    assert.equal(removed, true)
+    assert.equal(browser.services.size, 0)
+
+    // Should emit serviceDown via the iterator
+    const down = await nextEvent(iter)
+    assert.equal(down.type, 'serviceDown')
+    assert.equal(down.service.name, 'Removable')
+
+    browser.destroy()
+  })
+
+  test('returns false for unknown FQDN', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const removed = browser.removeService('Nonexistent._http._tcp.local')
+    assert.equal(removed, false)
+    browser.destroy()
+  })
+
+  test('removed service can be re-discovered', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'Comeback',
+      type: '_http._tcp',
+      host: 'comeback.local',
+      port: 80,
+      addresses: ['10.0.0.1'],
+    })
+
+    const up = await nextEvent(iter)
+    assert.equal(up.type, 'serviceUp')
+
+    // Remove it
+    browser.removeService(up.service.fqdn)
+    const down = await nextEvent(iter)
+    assert.equal(down.type, 'serviceDown')
+
+    // Re-announce — should be discovered as a fresh serviceUp
+    await advertiser.announce({
+      name: 'Comeback',
+      type: '_http._tcp',
+      host: 'comeback.local',
+      port: 80,
+      addresses: ['10.0.0.1'],
+    })
+
+    const reUp = await nextEvent(iter)
+    assert.equal(reUp.type, 'serviceUp')
+    assert.equal(reUp.service.name, 'Comeback')
+
+    browser.destroy()
   })
 })

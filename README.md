@@ -44,10 +44,15 @@ for await (const event of browser) {
 ### Find the first service
 
 ```js
-const browser = mdns.browse('_http._tcp')
-const service = await browser.first()
-console.log(service.name, service.host, service.port)
-browser.destroy()
+const browser = mdns.browse('_http._tcp', {
+  signal: AbortSignal.timeout(10_000)
+})
+for await (const event of browser) {
+  if (event.type === 'serviceUp') {
+    console.log(event.service.name, event.service.host, event.service.port)
+    break // stops the browser
+  }
+}
 ```
 
 ### Object-form service type
@@ -87,29 +92,43 @@ for await (const event of browser) {
 }
 ```
 
-### Cancellation
+### Stopping a browser
+
+Breaking out of a `for await` loop or aborting via `AbortSignal` automatically stop the browser — no manual cleanup needed:
 
 ```js
-// With AbortController
-const ac = new AbortController()
-const browser = mdns.browse('_http._tcp', { signal: ac.signal })
-
-setTimeout(() => ac.abort(), 10_000)
-
+// break / return automatically stops the browser
 for await (const event of browser) {
-  console.log(event)
+  if (event.type === 'serviceUp') {
+    break // browser is stopped and cleaned up
+  }
 }
-// Loop exits when aborted
 
-// With explicit destroy
-browser.destroy()
-
-// With await using (Symbol.asyncDispose)
-{
-  await using mdns = new DnsSdBrowser()
-  const browser = mdns.browse('_http._tcp')
-  // automatically cleaned up at end of block
+// AbortSignal throws AbortError when aborted
+const browser = mdns.browse('_http._tcp', {
+  signal: AbortSignal.timeout(10_000)
+})
+try {
+  for await (const event of browser) {
+    console.log(event)
+  }
+} catch (err) {
+  if (err.name === 'TimeoutError') {
+    console.log('Browsing timed out')
+  }
 }
+```
+
+Call `browser.destroy()` explicitly only if you are **not** consuming the async iterator (e.g. only polling `browser.services`):
+
+```js
+const browser = mdns.browse('_http._tcp')
+
+// Poll the live services map without iterating
+setTimeout(() => {
+  console.log('Found:', [...browser.services.values()])
+  browser.destroy() // must destroy manually since we never iterated
+}, 5000)
 ```
 
 ### Current services snapshot
@@ -125,12 +144,34 @@ for (const [fqdn, service] of browser.services) {
 }
 ```
 
+### Removing unreachable services
+
+If your application detects that a service is unreachable (e.g. via a health check), you can remove it from the browser without waiting for its TTL to expire:
+
+```js
+browser.removeService('My Printer._http._tcp.local')
+// Emits serviceDown and clears the cached record.
+// If the advertiser re-announces, it will appear as a fresh serviceUp.
+```
+
+This is useful on unreliable networks where devices disappear without sending goodbye packets. Most mDNS advertisers (including Android's NSD) use a 75-minute TTL, so without manual removal, stale services would linger for a long time.
+
 ### Cleanup
 
-Always destroy the `DnsSdBrowser` when done to close the mDNS socket:
+Always destroy the `DnsSdBrowser` instance when done to close the mDNS socket. Destroying the `DnsSdBrowser` also stops all its browsers:
 
 ```js
 await mdns.destroy() // stops all browsers and closes the socket
+```
+
+Or use `await using` for automatic cleanup:
+
+```js
+{
+  await using mdns = new DnsSdBrowser()
+  const browser = mdns.browse('_http._tcp')
+  // mdns and all browsers cleaned up at end of block
+}
 ```
 
 ## API
@@ -160,6 +201,24 @@ Browse for all service types on the network.
 
 Returns a `Promise<void>` that resolves when the mDNS socket is bound and ready.
 
+### `mdns.rejoin()`
+
+Re-join multicast groups and restart all browsers after a network interface change (e.g. WiFi reconnect, Ethernet re-plug).
+
+The OS drops multicast group membership when an interface goes down. This method re-establishes it, emits `serviceDown` for all previously discovered services, and restarts querying with the initial rapid schedule so services on the new network are discovered quickly.
+
+Without calling `rejoin()`, previously discovered services would still eventually expire via their TTL timers (typically ~75 minutes), but the socket would not receive any new multicast responses until the multicast group is re-joined.
+
+All previously known services are flushed as `serviceDown` because the browser cannot know whether you reconnected to the same network or a different one. On a different network those services don't exist; on the same network they will be re-discovered within seconds via the restarted query schedule.
+
+```js
+// Call from your application's network change handler
+mdns.rejoin()
+
+// The async iterator will receive serviceDown for all previous services,
+// followed by serviceUp as services are re-discovered on the new network
+```
+
 ### `mdns.destroy()`
 
 Stop all browsers and close the mDNS socket. Returns `Promise<void>`.
@@ -171,8 +230,9 @@ Returned by `browse()` and `browseAll()`. Implements `AsyncIterable<BrowseEvent>
 | Property/Method | Type | Description |
 |-----------------|------|-------------|
 | `services` | `Map<string, Service>` | Live map of currently discovered services |
-| `first()` | `Promise<Service>` | Resolves with the first `serviceUp` event |
-| `destroy()` | `void` | Stop browsing and end iteration |
+| `removeService(fqdn)` | `boolean` | Manually remove a service, emitting `serviceDown`. Returns `true` if found. |
+| `destroy()` | `void` | Stop browsing and end iteration (called automatically by `break` and `AbortSignal`) |
+| `resetNetwork()` | `void` | Flush services and restart queries (called by `mdns.rejoin()`) |
 | `[Symbol.asyncIterator]()` | `AsyncIterableIterator<BrowseEvent>` | Iterate over discovery events |
 | `[Symbol.asyncDispose]()` | `Promise<void>` | For `await using` support |
 
@@ -184,6 +244,47 @@ type BrowseEvent =
   | { type: 'serviceDown', service: Service }
   | { type: 'serviceUpdated', service: Service }
 ```
+
+#### Service resolution lifecycle
+
+Discovering a DNS-SD service requires multiple DNS record types, each carrying a different piece of information:
+
+1. **PTR** record — maps a service type (`_http._tcp.local`) to a specific instance name (`My Printer._http._tcp.local`). This is what browsing queries for.
+2. **SRV** record — provides the target hostname and port for that instance (`printer.local:631`).
+3. **TXT** record — carries metadata as key-value pairs (`path=/api`, `version=2`).
+4. **A / AAAA** records — resolve the hostname to IPv4/IPv6 addresses (`192.168.1.50`).
+
+Advertisers typically send all of these in a single response packet with the SRV, TXT, and address records in the "additionals" section. However, records can arrive in separate packets under normal conditions — for example, when a host's address changes (DHCP renewal), the advertiser sends just the new A record without re-sending the PTR or SRV. Records can also be split when the response exceeds the 1472-byte mDNS packet limit, or when different records have independent TTLs and are refreshed at different times.
+
+This library emits `serviceUp` as soon as the SRV record is resolved (providing `host` and `port`). Other records may arrive in later packets — the service is progressively filled in via `serviceUpdated` events:
+
+| Event | When | What's guaranteed | What may be empty |
+|-------|------|-------------------|-------------------|
+| `serviceUp` | SRV record resolved | `name`, `host`, `port`, `fqdn` | `addresses`, `txt`, `subtypes` |
+| `serviceUpdated` | Any field changed | All fields reflect current state | — |
+| `serviceDown` | TTL expired or goodbye | Snapshot at time of removal | — |
+
+Each service emits exactly one `serviceUp`, followed by zero or more `serviceUpdated`, and at most one `serviceDown`. You will never receive a second `serviceUp` for the same service.
+
+This matters when A/AAAA records arrive in a separate packet from the SRV (a split response). The `serviceUp` will have `addresses: []`, and a `serviceUpdated` follows shortly after with the addresses populated:
+
+```js
+const resolved = new Map()
+
+for await (const event of browser) {
+  if (event.type === 'serviceDown') {
+    resolved.delete(event.service.fqdn)
+    continue
+  }
+  const svc = event.service
+  if (svc.addresses.length > 0 && !resolved.has(svc.fqdn)) {
+    resolved.set(svc.fqdn, svc)
+    console.log(`Ready: ${svc.name} at ${svc.addresses[0]}:${svc.port}`)
+  }
+}
+```
+
+If you only need a service once it has addresses, you can also poll the `services` Map — it always reflects the latest state regardless of which events you've consumed.
 
 ### `Service`
 
@@ -202,6 +303,101 @@ interface Service {
   subtypes: string[]  // Service subtypes
   updatedAt: number   // Timestamp (ms)
 }
+```
+
+## Edge cases and caveats
+
+### `break` stops the browser
+
+`break` or `return` from a `for await` loop automatically stops the browser — it cannot be iterated again. If you need to find the first service and then keep browsing, consume events without breaking:
+
+```js
+const browser = mdns.browse('_http._tcp')
+let firstService
+for await (const event of browser) {
+  if (event.type === 'serviceUp' && !firstService) {
+    firstService = event.service
+    // don't break — keep browsing for more services
+  }
+}
+```
+
+### AbortSignal throws, doesn't end cleanly
+
+Aborting via `AbortSignal` throws the abort reason from the `for await` loop, matching the Node.js convention (`events.on`, `Readable`, `setInterval` all throw `AbortError`). Use try/catch to handle it:
+
+```js
+try {
+  for await (const event of browser) { /* ... */ }
+} catch (err) {
+  if (err.name === 'AbortError') {
+    // browsing was cancelled
+  }
+}
+```
+
+In contrast, `browser.destroy()` ends iteration cleanly (no throw).
+
+### Single async iterator
+
+Each `ServiceBrowser` supports only **one** active async iterator at a time. Attempting to create a second will throw:
+
+```js
+const browser = mdns.browse('_http._tcp')
+for await (const event of browser) { /* ... */ } // ok
+for await (const event of browser) { /* ... */ } // throws — iterator already active
+```
+
+If you need multiple consumers, read from `browser.services` (the live Map) instead.
+
+### `browseAll()` returns partial Service objects
+
+`browseAll()` queries for service _types_, not service _instances_. The returned `Service` objects represent service types and have incomplete fields:
+
+```js
+const browser = mdns.browseAll()
+for await (const event of browser) {
+  // event.service.fqdn → "_http._tcp.local" (the type, not an instance)
+  // event.service.host → ""
+  // event.service.port → 0
+  // event.service.addresses → []
+}
+```
+
+To discover actual service instances, use the type from `browseAll()` to start a targeted `browse()`.
+
+### `ready()` requires a prior `browse()` call
+
+The mDNS transport is started lazily on the first `browse()` or `browseAll()` call. Calling `ready()` before any browse will throw:
+
+```js
+const mdns = new DnsSdBrowser()
+await mdns.ready() // throws — transport not started yet
+
+const browser = mdns.browse('_http._tcp')
+await mdns.ready() // ok — transport is starting
+```
+
+### Transport start errors are deferred
+
+If the mDNS socket fails to bind (e.g. permission denied, port conflict), the error is **not** thrown from `browse()`. The browser will silently produce no events. To surface transport errors, call `ready()` after starting a browse:
+
+```js
+const browser = mdns.browse('_http._tcp')
+await mdns.ready() // throws if socket binding failed
+```
+
+### Event buffer overflow
+
+Events are buffered (up to 4,096) while waiting for the async iterator to consume them. If a consumer is too slow, the **oldest events are silently dropped**. This means a slow consumer could miss `serviceUp` events and later receive `serviceDown` for services it never saw appear. The `browser.services` Map always reflects the current state regardless of buffer overflow.
+
+### `services` Map keys are FQDNs
+
+The `browser.services` Map is keyed by the fully qualified service name (e.g. `"My Printer._http._tcp.local"`), not the short instance name. Use `service.name` for the human-readable name:
+
+```js
+browser.services.get('My Printer._http._tcp.local') // ✓
+browser.services.get('My Printer') // ✗ undefined
 ```
 
 ## RFC Compliance
@@ -238,11 +434,11 @@ These advertiser quirks are handled gracefully:
 
 | Quirk | Behavior | Seen in |
 |---|---|---|
-| Split responses (PTR in one packet, SRV in another) | Tracks pending FQDNs, resolves when SRV arrives | ciao, avahi |
+| Split responses (PTR in one packet, SRV in another) | Tracks pending FQDNs, resolves when SRV arrives | Normal mDNS behavior (see [resolution lifecycle](#service-resolution-lifecycle)) |
 | Non-zero rcode in responses | Ignored per RFC 6762 §18.11 | Embedded devices |
 | Records in authority section | Processed alongside answers and additionals | Various |
 | Missing TXT record | Service emitted with empty `txt: {}` | Minimal advertisers |
-| Missing A/AAAA records | Service emitted with empty `addresses: []` | Split responses |
+| Missing A/AAAA records | Service emitted with empty `addresses: []`, updated when they arrive | Normal mDNS behavior (see [resolution lifecycle](#service-resolution-lifecycle)) |
 | Non-zero packet ID | Accepted (RFC 6762 says ID should be 0, but receivers must not require it) | Legacy implementations |
 | Missing AA (authoritative) bit | Accepted | Various |
 | SRV with port 0 | Accepted as-is | Services indicating "not ready" |
@@ -295,20 +491,25 @@ These defenses are verified by a dedicated security test suite (`test/security.t
 
 ## When to use this library
 
-**On Windows**, there is no built-in mDNS stack. This library provides a pure-JavaScript DNS-SD browser that works out of the box — no native dependencies, no compilation, no system services to configure. This is the primary use case.
+### With a Node.js advertiser (e.g. ciao)
 
-**On macOS and Linux**, the operating system already includes an mDNS implementation (Bonjour on macOS, Avahi on most Linux distributions). Where possible, it is advisable to use these system mDNS stacks instead of running a second, independent mDNS implementation. As [RFC 6762 §15](https://www.rfc-editor.org/rfc/rfc6762#section-15) explains, running multiple mDNS stacks on the same machine has several drawbacks:
+This library is designed to run alongside a DNS-SD advertiser like [ciao](https://github.com/homebridge/ciao). A browser and advertiser on the same machine coexist well — they both bind to port 5353 with `SO_REUSEADDR` and receive all multicast traffic. This browser only sends queries and processes responses, while ciao sends responses and processes queries (it also monitors responses for conflict detection, but a browse-only module never announces records, so there is nothing to conflict with). The two RFC 6762 §15 concerns that apply to multiple *queriers* — known-answer list corruption and duplicated queries — don't apply here since only one side is querying. The only minor effect is that a unicast response to the browser's initial QU query may be delivered to ciao's socket instead, but the browser automatically retries via multicast on the next query interval.
 
-- **Port 5353 conflicts** — mDNS uses a well-known port. When multiple implementations bind to it with `SO_REUSEADDR`, only one receives unicast responses. This forces all queries to use multicast, increasing network traffic.
+### With a system mDNS stack (Bonjour, Avahi)
+
+**On macOS and Linux**, the operating system already includes a full mDNS implementation (Bonjour on macOS, Avahi on most Linux distributions) that handles both advertising and browsing. Running an additional querier alongside the system stack has some drawbacks, as [RFC 6762 §15](https://www.rfc-editor.org/rfc/rfc6762#section-15) explains:
+
+- **Port 5353 conflicts** — when multiple implementations bind to it with `SO_REUSEADDR`, only one receives unicast responses. This forces all queries to use multicast, increasing network traffic.
 - **Known-answer list corruption** — when multiple queriers send simultaneous queries, responders may incorrectly merge their known-answer lists (which are assembled by source IP address), leading to missed answers.
-- **Resource efficiency** — two independent mDNS stacks consume twice the memory and CPU, which is compounded by running in an interpreted language.
+- **Resource efficiency** — two independent queriers consume extra memory and CPU.
 
-If you need a DNS-SD browser that integrates with the system mDNS on macOS/Linux, consider using native bindings like the [`mdns`](https://www.npmjs.com/package/mdns) package. However, `mdns` requires C++ compilation on install and can be difficult to set up on some platforms — particularly Windows.
+If you need a DNS-SD browser that uses the system mDNS on macOS/Linux, consider native bindings like the [`mdns`](https://www.npmjs.com/package/mdns) package. However, `mdns` requires C++ compilation on install and can be difficult to set up on some platforms — particularly Windows.
 
-This library is best suited for:
+### Best suited for
 
 - **Windows** — no system mDNS available
 - **Cross-platform apps** — needs to work everywhere without native compilation
+- **Pairing with ciao** — browser complement to ciao's advertiser, no native dependencies
 - **Environments where system mDNS is absent** — containers, embedded systems, CI runners
 - **Testing and development** — quick setup, no system dependencies
 
