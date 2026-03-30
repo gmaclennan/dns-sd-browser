@@ -38,7 +38,7 @@ export function setTCBit(buf) {
  */
 export function setResponseNoAA(buf) {
   buf[2] = (buf[2] | 0x80) & ~0x04 // QR=1, AA=0, preserve opcode/TC/RD
-  buf[3] = buf[3] & 0xf0           // rcode=0, preserve RA/Z/AD/CD
+  // buf[3] left untouched — preserves RA/Z/AD/CD/rcode
   return buf
 }
 

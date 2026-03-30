@@ -325,8 +325,11 @@ describe('Service removal', () => {
     // Send goodbye — this schedules removal in 1 second
     await advertiser.goodbye(serviceInfo)
 
-    // Re-announce quickly within the 1-second window — should cancel the goodbye
-    await delay(50)
+    // Wait long enough for the goodbye to be processed and the pending
+    // removal to be scheduled, but well within the 1-second window
+    await delay(200)
+
+    // Re-announce within the 1-second window — should cancel the goodbye
     await advertiser.announce({
       ...serviceInfo,
       addresses: ['192.168.1.1'],
