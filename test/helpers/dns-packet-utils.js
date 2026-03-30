@@ -31,13 +31,14 @@ export function setTCBit(buf) {
 }
 
 /**
- * Set the QR bit (response) without AA in a DNS packet buffer.
+ * Force QR=1 (response) and AA=0 in a DNS packet buffer,
+ * preserving all other flag bits (opcode, TC, RD, RA, Z, AD, CD, rcode).
  * @param {Buffer} buf - Encoded DNS packet
  * @returns {Buffer} The same buffer, mutated
  */
 export function setResponseNoAA(buf) {
-  buf[2] = 0x80 // QR=1, AA=0, opcode=0
-  buf[3] = 0x00 // rcode=0
+  buf[2] = (buf[2] | 0x80) & ~0x04 // QR=1, AA=0, preserve opcode/TC/RD
+  buf[3] = buf[3] & 0xf0           // rcode=0, preserve RA/Z/AD/CD
   return buf
 }
 
@@ -48,7 +49,7 @@ export function setResponseNoAA(buf) {
  * @returns {Buffer} The same buffer, mutated
  */
 export function setOpcode(buf, opcode) {
-  buf[2] = buf[2] | ((opcode & 0x0f) << 3)
+  buf[2] = (buf[2] & 0x87) | ((opcode & 0x0f) << 3)
   return buf
 }
 

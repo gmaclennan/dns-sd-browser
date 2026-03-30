@@ -11,7 +11,7 @@ import dnsPacket from 'dns-packet'
 import { DnsSdBrowser } from '../lib/index.js'
 import { TestAdvertiser } from './helpers/advertiser.js'
 import { nextEvent, collectEvents, getRandomPort, delay, TEST_INTERFACE } from './helpers/utils.js'
-import { setOpcode, setRcode, setResponseNoAA, setQUBitOnFirstQuestion } from './helpers/dns-packet-utils.js'
+import { setOpcode, setRcode, setQUBitOnFirstQuestion } from './helpers/dns-packet-utils.js'
 
 // ─── Cache & TTL Management (RFC 6762 §6, §10.1) ─────────────────────
 
