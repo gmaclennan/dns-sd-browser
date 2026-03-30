@@ -181,6 +181,9 @@ describe('Cache and TTL management', () => {
     assert.equal(upEvent.type, 'serviceUp')
     assert.ok(upEvent.service.addresses.includes('192.168.1.1'))
 
+    // Wait >1s so the old address is outside the cache-flush grace period
+    await delay(1100)
+
     // Send an A record WITH cache-flush — should replace, not merge
     const addrUpdate = dnsPacket.encode({
       type: 'response',
@@ -203,6 +206,53 @@ describe('Cache and TTL management', () => {
     assert.equal(updateEvent.type, 'serviceUpdated')
     // Old address should be flushed, only new one present
     assert.deepEqual(updateEvent.service.addresses, ['10.0.0.2'])
+
+    browser.destroy()
+  })
+
+  test('cache-flush within 1s grace period merges addresses (RFC 6762 §10.2)', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'Addr Grace',
+      type: '_http._tcp',
+      host: 'addrgrace.local',
+      port: 80,
+      addresses: ['192.168.1.1'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+    assert.ok(upEvent.service.addresses.includes('192.168.1.1'))
+
+    // Immediately send a cache-flush address update (within 1 second)
+    // Per RFC 6762 §10.2, the old address should be kept because it was
+    // received less than 1 second ago (grace period for multi-packet bursts)
+    const addrUpdate = dnsPacket.encode({
+      type: 'response',
+      id: 0,
+      flags: dnsPacket.AUTHORITATIVE_ANSWER,
+      answers: [
+        {
+          type: 'A',
+          name: 'addrgrace.local',
+          ttl: 120,
+          class: 'IN',
+          flush: true,
+          data: '10.0.0.3',
+        },
+      ],
+    })
+    await advertiser.sendRaw(addrUpdate)
+
+    const updateEvent = await nextEvent(iter)
+    assert.equal(updateEvent.type, 'serviceUpdated')
+    // Both addresses should be present — old one kept due to grace period
+    assert.ok(updateEvent.service.addresses.includes('192.168.1.1'),
+      'old address should be kept within 1s grace period')
+    assert.ok(updateEvent.service.addresses.includes('10.0.0.3'),
+      'new address should be added')
 
     browser.destroy()
   })
@@ -1378,6 +1428,118 @@ describe('Duplicate question suppression (RFC 6762 §7.3)', () => {
       queriesAfter.length >= 1,
       `Expected at least 1 query (no suppression), got ${queriesAfter.length}`
     )
+
+    browser.destroy()
+  })
+})
+
+// ─── Cache flush on failure indication (RFC 6762 §10.4) ─────────────
+
+describe('Cache flush on failure indication', () => {
+  /** @type {number} */
+  let port
+  /** @type {DnsSdBrowser} */
+  let mdns
+  /** @type {TestAdvertiser} */
+  let advertiser
+
+  before(async () => {
+    port = await getRandomPort()
+    advertiser = new TestAdvertiser({ port })
+    await advertiser.start()
+  })
+
+  after(async () => {
+    await advertiser.stop()
+  })
+
+  beforeEach(async () => {
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    mdns.browse('_noop._tcp').destroy()
+    await mdns.ready()
+    advertiser.clearQueries()
+  })
+
+  afterEach(async () => {
+    await mdns.destroy()
+  })
+
+  test('reconfirm() removes service if no response within timeout (RFC 6762 §10.4)', async () => {
+    const RECONFIRM_TIMEOUT = 500
+    const browser = mdns.browse('_http._tcp', { reconfirmTimeoutMs: RECONFIRM_TIMEOUT })
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'Stale Service',
+      type: '_http._tcp',
+      host: 'stale.local',
+      port: 8080,
+      addresses: ['192.168.1.1'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+    assert.equal(upEvent.service.name, 'Stale Service')
+
+    // Request reconfirmation — no response will be sent
+    browser.reconfirm('Stale Service._http._tcp.local')
+
+    // Service should be removed after the reconfirmation timeout
+    const downEvent = await nextEvent(iter, RECONFIRM_TIMEOUT + 2000)
+    assert.equal(downEvent.type, 'serviceDown')
+    assert.equal(downEvent.service.name, 'Stale Service')
+    assert.equal(browser.services.size, 0)
+
+    browser.destroy()
+  })
+
+  test('reconfirm() keeps service if response is received (RFC 6762 §10.4)', async () => {
+    const RECONFIRM_TIMEOUT = 500
+    const browser = mdns.browse('_http._tcp', { reconfirmTimeoutMs: RECONFIRM_TIMEOUT })
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'Alive Service',
+      type: '_http._tcp',
+      host: 'alive.local',
+      port: 8080,
+      addresses: ['192.168.1.2'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+    assert.equal(upEvent.service.name, 'Alive Service')
+
+    // Request reconfirmation
+    browser.reconfirm('Alive Service._http._tcp.local')
+
+    // Re-announce to prove the service is still alive
+    await advertiser.announce({
+      name: 'Alive Service',
+      type: '_http._tcp',
+      host: 'alive.local',
+      port: 8080,
+      addresses: ['192.168.1.2'],
+    })
+
+    // Wait past the reconfirmation timeout
+    await delay(RECONFIRM_TIMEOUT + 200)
+
+    // Service should still be present — it was reconfirmed
+    assert.equal(browser.services.size, 1)
+    assert.ok(browser.services.has('Alive Service._http._tcp.local'))
+
+    browser.destroy()
+  })
+
+  test('reconfirm() on unknown FQDN is a no-op (RFC 6762 §10.4)', async () => {
+    const browser = mdns.browse('_http._tcp', { reconfirmTimeoutMs: 500 })
+
+    // Should not throw or cause any issues
+    browser.reconfirm('Nonexistent._http._tcp.local')
+
+    // Verify no services were affected
+    assert.equal(browser.services.size, 0)
 
     browser.destroy()
   })
