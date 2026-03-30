@@ -1793,22 +1793,17 @@ describe('Passive Observation of Failures (POOF) — RFC 6762 §10.5', () => {
     // Send QU queries (unicast-response bit set) — these may get unicast
     // replies we can't observe, so POOF must not count them as unanswered.
     // Manually set the QU bit (high bit of class field) in the raw packet.
+    // dns-packet doesn't support numeric class values, so we encode a
+    // normal IN-class query and patch the class field directly.
     const quQuery = dnsPacket.encode({
       type: 'query',
       id: 0,
       flags: 0,
       questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
     })
-    // Set the QU bit: class field is the last 2 bytes of the question section.
-    // Find it by scanning for the question's class field (0x00 0x01 = IN)
-    // after the type field (0x00 0x0C = PTR). Set high bit: 0x80 0x01.
-    for (let i = 12; i < quQuery.length - 1; i++) {
-      if (quQuery[i] === 0x00 && quQuery[i + 1] === 0x0C && // TYPE = PTR
-          quQuery[i + 2] === 0x00 && quQuery[i + 3] === 0x01) { // CLASS = IN
-        quQuery[i + 2] = 0x80 // Set QU bit
-        break
-      }
-    }
+    // For a single-question packet with no answers, the class field
+    // occupies the last 2 bytes: set the high bit for QU (0x80 | 0x01).
+    quQuery[quQuery.length - 2] = 0x80
     await advertiser.sendRaw(quQuery)
     await delay(POOF_RESPONSE_WAIT_MS + 200)
 
