@@ -1644,3 +1644,175 @@ describe('Cache flush on failure indication', () => {
     browser.destroy()
   })
 })
+
+// ─── Passive Observation of Failures / POOF (RFC 6762 §10.5) ─────────
+
+describe('Passive Observation of Failures (POOF) — RFC 6762 §10.5', () => {
+  /** @type {number} */
+  let port
+  /** @type {DnsSdBrowser} */
+  let mdns
+  /** @type {TestAdvertiser} */
+  let advertiser
+
+  // Use short timeouts for testing
+  const POOF_TIMEOUT_MS = 3000
+  const POOF_RESPONSE_WAIT_MS = 500
+
+  before(async () => {
+    port = await getRandomPort()
+    advertiser = new TestAdvertiser({ port })
+    await advertiser.start()
+  })
+
+  after(async () => {
+    await advertiser.stop()
+  })
+
+  beforeEach(async () => {
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    mdns.browse('_noop._tcp').destroy()
+    await mdns.ready()
+    advertiser.clearQueries()
+  })
+
+  afterEach(async () => {
+    await mdns.destroy()
+  })
+
+  test('flushes cached record after 2+ unanswered queries within timeout window', async () => {
+    const browser = mdns.browse('_http._tcp', {
+      poofTimeoutMs: POOF_TIMEOUT_MS,
+      poofResponseWaitMs: POOF_RESPONSE_WAIT_MS,
+    })
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'POOF Target',
+      type: '_http._tcp',
+      host: 'poof.local',
+      port: 8080,
+      addresses: ['192.168.1.50'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+    assert.equal(browser.services.size, 1)
+
+    // Simulate another host querying (query 1)
+    await advertiser.sendQuery({
+      questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
+    })
+    await delay(POOF_RESPONSE_WAIT_MS + 200)
+    assert.equal(browser.services.size, 1, 'should still exist after 1 unanswered query')
+
+    // Simulate another host querying (query 2) — triggers POOF flush
+    await advertiser.sendQuery({
+      questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
+    })
+    await delay(POOF_RESPONSE_WAIT_MS + 200)
+
+    const downEvent = await nextEvent(iter, 2000)
+    assert.equal(downEvent.type, 'serviceDown')
+    assert.equal(downEvent.service.name, 'POOF Target')
+    assert.equal(browser.services.size, 0)
+
+    browser.destroy()
+  })
+
+  test('does NOT flush record when a response is seen after the query', async () => {
+    const browser = mdns.browse('_http._tcp', {
+      poofTimeoutMs: POOF_TIMEOUT_MS,
+      poofResponseWaitMs: POOF_RESPONSE_WAIT_MS,
+    })
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'POOF Survivor',
+      type: '_http._tcp',
+      host: 'survivor.local',
+      port: 9090,
+      addresses: ['192.168.1.60'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+
+    // Query 1 — respond before timer expires
+    await advertiser.sendQuery({
+      questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
+    })
+    await delay(100)
+    await advertiser.announce({
+      name: 'POOF Survivor',
+      type: '_http._tcp',
+      host: 'survivor.local',
+      port: 9090,
+      addresses: ['192.168.1.60'],
+    })
+    await delay(POOF_RESPONSE_WAIT_MS + 200)
+
+    // Query 2 — respond before timer expires
+    await advertiser.sendQuery({
+      questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
+    })
+    await delay(100)
+    await advertiser.announce({
+      name: 'POOF Survivor',
+      type: '_http._tcp',
+      host: 'survivor.local',
+      port: 9090,
+      addresses: ['192.168.1.60'],
+    })
+    await delay(POOF_RESPONSE_WAIT_MS + 200)
+
+    // Service should still be present — responses were observed
+    assert.equal(browser.services.size, 1)
+
+    browser.destroy()
+  })
+
+  test('QU (unicast-response) queries do not trigger POOF flush', async () => {
+    const browser = mdns.browse('_http._tcp', {
+      poofTimeoutMs: POOF_TIMEOUT_MS,
+      poofResponseWaitMs: POOF_RESPONSE_WAIT_MS,
+    })
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'QU POOF Test',
+      type: '_http._tcp',
+      host: 'qutest.local',
+      port: 8080,
+      addresses: ['192.168.1.70'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+
+    // Send QU queries (unicast-response bit set) — these may get unicast
+    // replies we can't observe, so POOF must not count them as unanswered.
+    // Manually set the QU bit (high bit of class field) in the raw packet.
+    // dns-packet doesn't support numeric class values, so we encode a
+    // normal IN-class query and patch the class field directly.
+    const quQuery = dnsPacket.encode({
+      type: 'query',
+      id: 0,
+      flags: 0,
+      questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
+    })
+    // For a single-question packet with no answers, the class field
+    // occupies the last 2 bytes: set the high bit for QU (0x80 | 0x01).
+    quQuery[quQuery.length - 2] = 0x80
+    await advertiser.sendRaw(quQuery)
+    await delay(POOF_RESPONSE_WAIT_MS + 200)
+
+    await advertiser.sendRaw(quQuery)
+    await delay(POOF_RESPONSE_WAIT_MS + 200)
+
+    // Service should still be present — QU queries must not trigger POOF
+    assert.equal(browser.services.size, 1)
+
+    browser.destroy()
+  })
+})
