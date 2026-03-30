@@ -728,6 +728,47 @@ describe('Authority section parsing', () => {
   })
 })
 
+describe('NFC normalization (RFC 6762 §16)', () => {
+  test('NFD name is normalized to NFC when encoded', () => {
+    // é as NFD: U+0065 (e) + U+0301 (combining acute accent)
+    const nfdName = 'caf\u0065\u0301._http._tcp.local'
+    // é as NFC: U+00E9
+    const nfcName = 'caf\u00e9._http._tcp.local'
+
+    const buf = dns.encodeQuery({
+      questions: [{ name: nfdName, type: dns.RecordType.PTR }],
+    })
+
+    const decoded = dns.decode(buf)
+    assert.equal(decoded.questions[0].name, nfcName)
+  })
+
+  test('NFD and NFC names produce identical encoded bytes', () => {
+    const nfdName = 'caf\u0065\u0301._http._tcp.local'
+    const nfcName = 'caf\u00e9._http._tcp.local'
+
+    const bufNFD = dns.encodeQuery({
+      questions: [{ name: nfdName, type: dns.RecordType.PTR }],
+    })
+    const bufNFC = dns.encodeQuery({
+      questions: [{ name: nfcName, type: dns.RecordType.PTR }],
+    })
+
+    assert.deepEqual(bufNFD, bufNFC)
+  })
+
+  test('round-tripping a precomposed (NFC) name preserves it', () => {
+    const nfcName = 'caf\u00e9._http._tcp.local'
+
+    const buf = dns.encodeQuery({
+      questions: [{ name: nfcName, type: dns.RecordType.PTR }],
+    })
+
+    const decoded = dns.decode(buf)
+    assert.equal(decoded.questions[0].name, nfcName)
+  })
+})
+
 describe('Multi-packet known-answer splitting', () => {
   test('small query fits in a single packet', () => {
     const packets = dns.encodeQueryPackets({
