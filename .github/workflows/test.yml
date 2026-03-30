@@ -32,3 +32,8 @@ jobs:
         env:
           # Ubuntu runners have IPv6 loopback — require the IPv6 test to run, not skip.
           TEST_IPV6: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
