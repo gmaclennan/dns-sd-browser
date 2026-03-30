@@ -1276,6 +1276,263 @@ describe('Advanced scenarios', () => {
   })
 })
 
+// ─── Duplicate Question Suppression (RFC 6762 §7.3) ────────────────────
+
+describe('Duplicate question suppression (RFC 6762 §7.3)', () => {
+  /** @type {number} */
+  let port
+  /** @type {DnsSdBrowser} */
+  let mdns
+  /** @type {TestAdvertiser} */
+  let advertiser
+
+  before(async () => {
+    port = await getRandomPort()
+    advertiser = new TestAdvertiser({ port })
+    await advertiser.start()
+  })
+
+  after(async () => {
+    await advertiser.stop()
+  })
+
+  beforeEach(async () => {
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    mdns.browse('_noop._tcp').destroy()
+    await mdns.ready()
+    advertiser.clearQueries()
+  })
+
+  afterEach(async () => {
+    await mdns.destroy()
+  })
+
+  test('suppresses next query when another host sends matching QM query with sufficient known answers', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    // Announce a service so the browser has a known PTR record
+    await advertiser.announce({
+      name: 'Suppression Test',
+      type: '_http._tcp',
+      host: 'suppress.local',
+      port: 8080,
+      addresses: ['192.168.1.50'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+    assert.equal(upEvent.service.name, 'Suppression Test')
+
+    // Wait for two browser queries so we're well into the QM phase.
+    // After the initial QU query (queryIndex 0→1), next interval is 2s.
+    // After that fires (queryIndex 1→2), next interval is 4s.
+    await advertiser.waitForQuery(
+      (q) => (q.questions || []).some((qq) => qq.type === 'PTR'),
+      3000
+    )
+    advertiser.clearQueries()
+    await advertiser.waitForQuery(
+      (q) => (q.questions || []).some((qq) => qq.type === 'PTR'),
+      5000
+    )
+
+    // Now queryIndex=2, next unsuppressed interval is ~4s.
+    // Wait 200ms past the loopback guard so the browser doesn't
+    // mistake our injected query for its own.
+    await delay(200)
+    advertiser.clearQueries()
+
+    await advertiser.sendQuery({
+      questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
+      answers: [
+        {
+          type: 'PTR',
+          name: '_http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          data: 'Suppression Test._http._tcp.local',
+        },
+      ],
+    })
+
+    // Allow suppression to take effect
+    await delay(100)
+    advertiser.clearQueries()
+    const measureStart = Date.now()
+
+    // Wait for the next query from the browser.
+    const nextQuery = await advertiser.waitForQuery(
+      (q) => (q.questions || []).some(
+        (qq) => qq.type === 'PTR' && qq.name === '_http._tcp.local'
+      ),
+      15000
+    )
+    const elapsed = Date.now() - measureStart
+
+    assert.ok(nextQuery, 'should eventually receive a query')
+    // Without suppression, the next query would fire at the current ~4s
+    // interval (~3.7s from measureStart). With suppression, queryIndex
+    // advances to 3 and the interval becomes ~8s (~7.7s from measureStart).
+    // Assert the delay exceeds the unsuppressed interval, proving
+    // suppression pushed the schedule forward.
+    assert.ok(
+      elapsed >= 5000,
+      `Expected suppressed query to be delayed beyond the normal ~4s interval; got ${elapsed}ms`
+    )
+
+    browser.destroy()
+  })
+
+  test('does NOT suppress when incoming query has insufficient known answers', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    // Announce two services so the browser knows about both
+    await advertiser.announce({
+      name: 'Service A',
+      type: '_http._tcp',
+      host: 'a.local',
+      port: 8080,
+      addresses: ['192.168.1.51'],
+    })
+    const ev1 = await nextEvent(iter)
+    assert.equal(ev1.type, 'serviceUp')
+
+    await advertiser.announce({
+      name: 'Service B',
+      type: '_http._tcp',
+      host: 'b.local',
+      port: 8081,
+      addresses: ['192.168.1.52'],
+    })
+    const ev2 = await nextEvent(iter)
+    assert.equal(ev2.type, 'serviceUp')
+
+    // Wait for a scheduled QM query so we're past the initial QU phase.
+    // After this fires (queryIndex 1→2), next interval is ~4s.
+    await advertiser.waitForQuery(
+      (q) => (q.questions || []).some((qq) => qq.type === 'PTR'),
+      3000
+    )
+
+    // Wait past the loopback guard so the browser processes our query
+    await delay(200)
+    advertiser.clearQueries()
+    const measureStart = Date.now()
+
+    // Send a QM query that only covers one of the two known services
+    // (insufficient known answers — should NOT suppress)
+    await advertiser.sendQuery({
+      questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
+      answers: [
+        {
+          type: 'PTR',
+          name: '_http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          data: 'Service A._http._tcp.local',
+        },
+        // Service B is missing from the known answers
+      ],
+    })
+
+    // The browser should NOT suppress — its next query should arrive on the
+    // normal ~4s schedule. If suppression incorrectly fired, the interval
+    // would jump to ~8s.
+    const query = await advertiser.waitForQuery(
+      (q) => (q.questions || []).some(
+        (qq) => qq.type === 'PTR' && qq.name === '_http._tcp.local'
+      ),
+      7000
+    )
+    const elapsed = Date.now() - measureStart
+
+    assert.ok(query, 'browser should still send query when known answers are insufficient')
+    // Normal interval is ~4s. If suppression incorrectly fired it would be ~8s.
+    // Assert the query arrived within the normal interval window.
+    assert.ok(
+      elapsed < 6000,
+      `Expected query on normal schedule (~4s); got ${elapsed}ms — suppression may have incorrectly fired`
+    )
+
+    browser.destroy()
+  })
+
+  test('does NOT suppress for QU (unicast) queries', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'QU Test',
+      type: '_http._tcp',
+      host: 'qutest.local',
+      port: 8080,
+      addresses: ['192.168.1.53'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+
+    // Wait for one QM query so we're past initial QU phase.
+    // After this fires (queryIndex 1→2), next interval is ~4s.
+    await advertiser.waitForQuery(
+      (q) => (q.questions || []).some((qq) => qq.type === 'PTR'),
+      3000
+    )
+
+    await delay(200)
+    advertiser.clearQueries()
+    const measureStart = Date.now()
+
+    // Send a QU query with sufficient known answers. RFC 6762 §7.3
+    // suppression applies only to QM questions, so this should NOT suppress.
+    // Encode as a normal query, then set the QU bit (high bit of class field)
+    // in the raw buffer since dns-packet doesn't support numeric class values.
+    const quBuf = dnsPacket.encode({
+      type: 'query',
+      id: 0,
+      flags: 0,
+      questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
+      answers: [
+        {
+          type: 'PTR',
+          name: '_http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          data: 'QU Test._http._tcp.local',
+        },
+      ],
+    })
+    // Find the class field for the question (right after the question name
+    // and 2-byte type field) and set the QU bit (0x8000).
+    // Header is 12 bytes, then the encoded question name, then 2 bytes type,
+    // then 2 bytes class. Scan for the question's class field offset.
+    let nameEnd = 12
+    while (quBuf[nameEnd] !== 0) nameEnd += 1 + quBuf[nameEnd]
+    nameEnd++ // skip null terminator
+    const classOffset = nameEnd + 2 // skip type field
+    quBuf.writeUInt16BE(quBuf.readUInt16BE(classOffset) | 0x8000, classOffset)
+    await advertiser.sendRaw(quBuf)
+
+    const query = await advertiser.waitForQuery(
+      (q) => (q.questions || []).some(
+        (qq) => qq.type === 'PTR' && qq.name === '_http._tcp.local'
+      ),
+      7000
+    )
+    const elapsed = Date.now() - measureStart
+
+    assert.ok(query, 'browser should still send query after QU query from another host')
+    assert.ok(
+      elapsed < 6000,
+      `Expected query on normal schedule (~4s); got ${elapsed}ms — QU query should not suppress`
+    )
+
+    browser.destroy()
+  })
+})
+
 // ─── Cache flush on failure indication (RFC 6762 §10.4) ─────────────
 
 describe('Cache flush on failure indication', () => {
