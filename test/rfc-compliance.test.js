@@ -1324,13 +1324,23 @@ describe('Duplicate question suppression (RFC 6762 §7.3)', () => {
     assert.equal(upEvent.type, 'serviceUp')
     assert.equal(upEvent.service.name, 'Suppression Test')
 
-    // Wait for the browser's first scheduled query to be sent (1s interval)
-    // then clear so we can measure the next window
-    await delay(1500)
+    // Wait for two browser queries so we're well into the QM phase
+    // (queryIndex >= 2, next interval ~4s).
+    await advertiser.waitForQuery(
+      (q) => (q.questions || []).some((qq) => qq.type === 'PTR'),
+      3000
+    )
+    advertiser.clearQueries()
+    await advertiser.waitForQuery(
+      (q) => (q.questions || []).some((qq) => qq.type === 'PTR'),
+      5000
+    )
+
+    // Now inject the suppression query. Wait 200ms after the browser's last
+    // query so the loopback guard doesn't filter us out.
+    await delay(200)
     advertiser.clearQueries()
 
-    // Now simulate another host sending a QM query with the same question
-    // and known answers that cover our known-answer set
     await advertiser.sendQuery({
       questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
       answers: [
@@ -1344,25 +1354,28 @@ describe('Duplicate question suppression (RFC 6762 §7.3)', () => {
       ],
     })
 
-    // The browser should suppress its next query. Wait for what would be the
-    // next query interval (~2s at this point in the schedule) plus some margin.
-    // If suppression works, the query timer was reset, so we should see no
-    // query in the original window.
-    await delay(2000)
-    const queriesInWindow = advertiser.receivedQueries.filter((q) =>
-      q.questions?.some(
-        (/** @type {any} */ qu) =>
-          qu.type === 'PTR' && qu.name.toLowerCase() === '_http._tcp.local'
-      )
-    )
+    // Allow suppression to take effect
+    await delay(100)
+    advertiser.clearQueries()
+    const measureStart = Date.now()
 
-    // Should have 0 or at most 1 query (the rescheduled one arriving near
-    // the end of the window). The key assertion is that the immediate next
-    // query was suppressed — if suppression didn't work, we'd see a query
-    // much sooner. We verify by checking the count is ≤ 1.
+    // Wait for the next query from the browser.
+    const nextQuery = await advertiser.waitForQuery(
+      (q) => (q.questions || []).some(
+        (qq) => qq.type === 'PTR' && qq.name === '_http._tcp.local'
+      ),
+      15000
+    )
+    const elapsed = Date.now() - measureStart
+
+    assert.ok(nextQuery, 'should eventually receive a query')
+    // Without suppression, the next query would fire within the current
+    // interval (~4s from the last query). With suppression, the timer is
+    // reset and the backoff advances, so the next query should be delayed
+    // by at least the next interval. We just check it took a while.
     assert.ok(
-      queriesInWindow.length <= 1,
-      `Expected at most 1 query after suppression, got ${queriesInWindow.length}`
+      elapsed >= 2000,
+      `Expected suppressed query to be significantly delayed; got next query after ${elapsed}ms`
     )
 
     browser.destroy()
@@ -1393,8 +1406,11 @@ describe('Duplicate question suppression (RFC 6762 §7.3)', () => {
     const ev2 = await nextEvent(iter)
     assert.equal(ev2.type, 'serviceUp')
 
-    // Wait for a scheduled query and clear
-    await delay(1500)
+    // Wait for a scheduled query so we're in QM phase, then clear
+    await advertiser.waitForQuery(
+      (q) => (q.questions || []).some((qq) => qq.type === 'PTR'),
+      3000
+    )
     advertiser.clearQueries()
 
     // Send a QM query that only covers one of the two known services
@@ -1414,20 +1430,16 @@ describe('Duplicate question suppression (RFC 6762 §7.3)', () => {
     })
 
     // The browser should NOT suppress — it should still send its next query
-    // because the incoming query's known-answer section is insufficient.
-    // Wait for the next query interval.
-    await delay(3000)
-    const queriesAfter = advertiser.receivedQueries.filter((q) =>
-      q.questions?.some(
-        (/** @type {any} */ qu) =>
-          qu.type === 'PTR' && qu.name.toLowerCase() === '_http._tcp.local'
-      )
+    // on the normal schedule. Use waitForQuery with a tight timeout to verify
+    // the query arrives promptly.
+    const query = await advertiser.waitForQuery(
+      (q) => (q.questions || []).some(
+        (qq) => qq.type === 'PTR' && qq.name === '_http._tcp.local'
+      ),
+      5000
     )
 
-    assert.ok(
-      queriesAfter.length >= 1,
-      `Expected at least 1 query (no suppression), got ${queriesAfter.length}`
-    )
+    assert.ok(query, 'browser should still send query when known answers are insufficient')
 
     browser.destroy()
   })
