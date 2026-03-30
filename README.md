@@ -184,6 +184,66 @@ browser.reconfirm('My Printer._http._tcp.local')
 
 Use `reconfirm()` when a connection fails but you want to give the advertiser a chance to prove it's still there — for example, after a TCP connection is refused or a health check times out. Use `removeService()` when you're certain the service is gone and want it removed immediately.
 
+### Passive Observation of Failures (POOF)
+
+The browser automatically detects stale services using POOF (RFC 6762 §10.5). When other devices on the network query for a service type that the browser has cached, the browser watches for responses. If two or more queries go unanswered within a 10-second window, the unresponsive service is automatically flushed — no application code required.
+
+This works because on a healthy network, queries from any device should prompt the advertiser to respond. If no response is observed, the advertiser has likely left the network without sending a goodbye packet. POOF only counts multicast (QM) queries, not unicast-response (QU) queries, since unicast responses are sent directly to the querier and can't be observed by other hosts.
+
+POOF is most effective on networks with multiple mDNS clients — each client's queries give other clients a chance to observe whether advertisers are still responding. On a network where your application is the only mDNS client, POOF has no effect since there are no queries from other hosts to observe, and the library falls back to TTL expiration and refresh queries.
+
+### Handling unstable networks
+
+On unreliable networks — devices walking out of WiFi range, mobile devices sleeping, IoT devices rebooting — services often disappear without sending a goodbye packet. The library provides several layers of defense against stale services, some fully automatic and some requiring application involvement:
+
+**Handled automatically by the library (no application code needed):**
+
+| Mechanism | How it works | Typical delay |
+|---|---|---|
+| **Goodbye packets** (RFC 6762 §10.1) | Advertiser sends TTL=0 record before leaving | Immediate (1-second grace period to absorb flicker) |
+| **TTL expiration with refresh** (RFC 6762 §5.2) | Queries at 80%, 85%, 90%, 95% of TTL; removes if no response by 100% | Depends on TTL (often 75 min for Android NSD, 2 min for Avahi) |
+| **POOF** (RFC 6762 §10.5) | Flushes records after 2+ unanswered queries from other network hosts | ~10 seconds, but requires other mDNS clients on the network |
+| **Cache-flush bit** (RFC 6762 §10.2) | When an advertiser re-announces with cache-flush set, stale addresses from other advertisers are flushed | Immediate (1-second grace period for multi-packet bursts) |
+
+**Requires application involvement:**
+
+| Mechanism | When to use |
+|---|---|
+| **`reconfirm(fqdn)`** | A connection failed but the service might recover (e.g. TCP timeout). Sends verification queries and removes if no response within 10 seconds. |
+| **`removeService(fqdn)`** | Your health check confirms the service is definitely gone. Removes immediately. |
+| **`mdns.rejoin()`** | The network interface changed (WiFi reconnect, Ethernet re-plug). Flushes all services and restarts discovery. |
+
+**When do you need application-level monitoring?** The automatic mechanisms handle the common cases, but they have limitations on unstable networks:
+
+- **TTL expiration** is the primary automatic fallback when a device disappears silently, but standard TTLs are long — 75 minutes for Android NSD, 120 seconds for Avahi. Your application may show stale services for that entire duration.
+- **POOF** can detect stale services much faster (~10 seconds), but only works when other mDNS clients on the network happen to query for the same service type.
+- **Neither mechanism provides real-time detection.** If your application needs to know immediately when a service is unreachable (e.g. to update a UI or fail over to another service), implement application-level health checks and call `reconfirm()` or `removeService()` based on the results.
+
+A practical pattern for unstable networks:
+
+```js
+for await (const event of browser) {
+  if (event.type === 'serviceUp' || event.type === 'serviceUpdated') {
+    startHealthCheck(event.service)
+  }
+  if (event.type === 'serviceDown') {
+    stopHealthCheck(event.service)
+  }
+}
+
+function startHealthCheck(service) {
+  // Periodically verify the service is reachable
+  const interval = setInterval(async () => {
+    const reachable = await ping(service)
+    if (!reachable) {
+      clearInterval(interval)
+      // Give the advertiser a chance to respond before removing
+      browser.reconfirm(service.fqdn)
+    }
+  }, 30_000)
+}
+```
+
 ### Cleanup
 
 Always destroy the `DnsSdBrowser` instance when done to close the mDNS socket. Destroying the `DnsSdBrowser` also stops all its browsers:
@@ -453,8 +513,12 @@ This library implements the browser/querier side of:
   - QU (unicast-response) bit on initial queries (§5.4)
   - Known-answer suppression in queries (§7.1)
   - TTL-based cache expiration — services are removed when their TTL expires
-  - Cache-flush bit handling
-  - Goodbye packets (TTL=0)
+  - TTL refresh queries at 80/85/90/95% of TTL (§5.2)
+  - Cache-flush bit handling (§10.2)
+  - Goodbye packets (TTL=0) with 1-second grace period (§10.1)
+  - Cache flush on failure — `reconfirm()` API (§10.4)
+  - Passive Observation of Failures (POOF) — automatic stale record flushing (§10.5)
+  - Duplicate question suppression (§7.3)
   - Truncated response handling — re-queries with QU bit when TC is set (§18.5)
   - DNS name compression (encoding and decoding)
   - Malformed packet rejection with detailed errors
