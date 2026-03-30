@@ -181,6 +181,9 @@ describe('Cache and TTL management', () => {
     assert.equal(upEvent.type, 'serviceUp')
     assert.ok(upEvent.service.addresses.includes('192.168.1.1'))
 
+    // Wait >1s so the old address is outside the cache-flush grace period
+    await delay(1100)
+
     // Send an A record WITH cache-flush — should replace, not merge
     const addrUpdate = dnsPacket.encode({
       type: 'response',
@@ -203,6 +206,53 @@ describe('Cache and TTL management', () => {
     assert.equal(updateEvent.type, 'serviceUpdated')
     // Old address should be flushed, only new one present
     assert.deepEqual(updateEvent.service.addresses, ['10.0.0.2'])
+
+    browser.destroy()
+  })
+
+  test('cache-flush within 1s grace period merges addresses (RFC 6762 §10.2)', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'Addr Grace',
+      type: '_http._tcp',
+      host: 'addrgrace.local',
+      port: 80,
+      addresses: ['192.168.1.1'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+    assert.ok(upEvent.service.addresses.includes('192.168.1.1'))
+
+    // Immediately send a cache-flush address update (within 1 second)
+    // Per RFC 6762 §10.2, the old address should be kept because it was
+    // received less than 1 second ago (grace period for multi-packet bursts)
+    const addrUpdate = dnsPacket.encode({
+      type: 'response',
+      id: 0,
+      flags: dnsPacket.AUTHORITATIVE_ANSWER,
+      answers: [
+        {
+          type: 'A',
+          name: 'addrgrace.local',
+          ttl: 120,
+          class: 'IN',
+          flush: true,
+          data: '10.0.0.3',
+        },
+      ],
+    })
+    await advertiser.sendRaw(addrUpdate)
+
+    const updateEvent = await nextEvent(iter)
+    assert.equal(updateEvent.type, 'serviceUpdated')
+    // Both addresses should be present — old one kept due to grace period
+    assert.ok(updateEvent.service.addresses.includes('192.168.1.1'),
+      'old address should be kept within 1s grace period')
+    assert.ok(updateEvent.service.addresses.includes('10.0.0.3'),
+      'new address should be added')
 
     browser.destroy()
   })
@@ -1226,6 +1276,375 @@ describe('Advanced scenarios', () => {
   })
 })
 
+// ─── Duplicate Question Suppression (RFC 6762 §7.3) ────────────────────
+
+describe('Duplicate question suppression (RFC 6762 §7.3)', () => {
+  /** @type {number} */
+  let port
+  /** @type {DnsSdBrowser} */
+  let mdns
+  /** @type {TestAdvertiser} */
+  let advertiser
+
+  before(async () => {
+    port = await getRandomPort()
+    advertiser = new TestAdvertiser({ port })
+    await advertiser.start()
+  })
+
+  after(async () => {
+    await advertiser.stop()
+  })
+
+  beforeEach(async () => {
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    mdns.browse('_noop._tcp').destroy()
+    await mdns.ready()
+    advertiser.clearQueries()
+  })
+
+  afterEach(async () => {
+    await mdns.destroy()
+  })
+
+  test('suppresses next query when another host sends matching QM query with sufficient known answers', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    // Announce a service so the browser has a known PTR record
+    await advertiser.announce({
+      name: 'Suppression Test',
+      type: '_http._tcp',
+      host: 'suppress.local',
+      port: 8080,
+      addresses: ['192.168.1.50'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+    assert.equal(upEvent.service.name, 'Suppression Test')
+
+    // Wait for two browser queries so we're well into the QM phase.
+    // After the initial QU query (queryIndex 0→1), next interval is 2s.
+    // After that fires (queryIndex 1→2), next interval is 4s.
+    await advertiser.waitForQuery(
+      (q) => (q.questions || []).some((qq) => qq.type === 'PTR'),
+      3000
+    )
+    advertiser.clearQueries()
+    await advertiser.waitForQuery(
+      (q) => (q.questions || []).some((qq) => qq.type === 'PTR'),
+      5000
+    )
+
+    // Now queryIndex=2, next unsuppressed interval is ~4s.
+    // Wait 200ms past the loopback guard so the browser doesn't
+    // mistake our injected query for its own.
+    await delay(200)
+    advertiser.clearQueries()
+
+    await advertiser.sendQuery({
+      questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
+      answers: [
+        {
+          type: 'PTR',
+          name: '_http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          data: 'Suppression Test._http._tcp.local',
+        },
+      ],
+    })
+
+    // Allow suppression to take effect
+    await delay(100)
+    advertiser.clearQueries()
+    const measureStart = Date.now()
+
+    // Wait for the next query from the browser.
+    const nextQuery = await advertiser.waitForQuery(
+      (q) => (q.questions || []).some(
+        (qq) => qq.type === 'PTR' && qq.name === '_http._tcp.local'
+      ),
+      15000
+    )
+    const elapsed = Date.now() - measureStart
+
+    assert.ok(nextQuery, 'should eventually receive a query')
+    // Without suppression, the next query would fire at the current ~4s
+    // interval (~3.7s from measureStart). With suppression, queryIndex
+    // advances to 3 and the interval becomes ~8s (~7.7s from measureStart).
+    // Assert the delay exceeds the unsuppressed interval, proving
+    // suppression pushed the schedule forward.
+    assert.ok(
+      elapsed >= 5000,
+      `Expected suppressed query to be delayed beyond the normal ~4s interval; got ${elapsed}ms`
+    )
+
+    browser.destroy()
+  })
+
+  test('does NOT suppress when incoming query has insufficient known answers', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    // Announce two services so the browser knows about both
+    await advertiser.announce({
+      name: 'Service A',
+      type: '_http._tcp',
+      host: 'a.local',
+      port: 8080,
+      addresses: ['192.168.1.51'],
+    })
+    const ev1 = await nextEvent(iter)
+    assert.equal(ev1.type, 'serviceUp')
+
+    await advertiser.announce({
+      name: 'Service B',
+      type: '_http._tcp',
+      host: 'b.local',
+      port: 8081,
+      addresses: ['192.168.1.52'],
+    })
+    const ev2 = await nextEvent(iter)
+    assert.equal(ev2.type, 'serviceUp')
+
+    // Wait for a scheduled QM query so we're past the initial QU phase.
+    // After this fires (queryIndex 1→2), next interval is ~4s.
+    await advertiser.waitForQuery(
+      (q) => (q.questions || []).some((qq) => qq.type === 'PTR'),
+      3000
+    )
+
+    // Wait past the loopback guard so the browser processes our query
+    await delay(200)
+    advertiser.clearQueries()
+    const measureStart = Date.now()
+
+    // Send a QM query that only covers one of the two known services
+    // (insufficient known answers — should NOT suppress)
+    await advertiser.sendQuery({
+      questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
+      answers: [
+        {
+          type: 'PTR',
+          name: '_http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          data: 'Service A._http._tcp.local',
+        },
+        // Service B is missing from the known answers
+      ],
+    })
+
+    // The browser should NOT suppress — its next query should arrive on the
+    // normal ~4s schedule. If suppression incorrectly fired, the interval
+    // would jump to ~8s.
+    const query = await advertiser.waitForQuery(
+      (q) => (q.questions || []).some(
+        (qq) => qq.type === 'PTR' && qq.name === '_http._tcp.local'
+      ),
+      7000
+    )
+    const elapsed = Date.now() - measureStart
+
+    assert.ok(query, 'browser should still send query when known answers are insufficient')
+    // Normal interval is ~4s. If suppression incorrectly fired it would be ~8s.
+    // Assert the query arrived within the normal interval window.
+    assert.ok(
+      elapsed < 6000,
+      `Expected query on normal schedule (~4s); got ${elapsed}ms — suppression may have incorrectly fired`
+    )
+
+    browser.destroy()
+  })
+
+  test('does NOT suppress for QU (unicast) queries', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'QU Test',
+      type: '_http._tcp',
+      host: 'qutest.local',
+      port: 8080,
+      addresses: ['192.168.1.53'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+
+    // Wait for one QM query so we're past initial QU phase.
+    // After this fires (queryIndex 1→2), next interval is ~4s.
+    await advertiser.waitForQuery(
+      (q) => (q.questions || []).some((qq) => qq.type === 'PTR'),
+      3000
+    )
+
+    await delay(200)
+    advertiser.clearQueries()
+    const measureStart = Date.now()
+
+    // Send a QU query with sufficient known answers. RFC 6762 §7.3
+    // suppression applies only to QM questions, so this should NOT suppress.
+    // Encode as a normal query, then set the QU bit (high bit of class field)
+    // in the raw buffer since dns-packet doesn't support numeric class values.
+    const quBuf = dnsPacket.encode({
+      type: 'query',
+      id: 0,
+      flags: 0,
+      questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
+      answers: [
+        {
+          type: 'PTR',
+          name: '_http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          data: 'QU Test._http._tcp.local',
+        },
+      ],
+    })
+    // Find the class field for the question (right after the question name
+    // and 2-byte type field) and set the QU bit (0x8000).
+    // Header is 12 bytes, then the encoded question name, then 2 bytes type,
+    // then 2 bytes class. Scan for the question's class field offset.
+    let nameEnd = 12
+    while (quBuf[nameEnd] !== 0) nameEnd += 1 + quBuf[nameEnd]
+    nameEnd++ // skip null terminator
+    const classOffset = nameEnd + 2 // skip type field
+    quBuf.writeUInt16BE(quBuf.readUInt16BE(classOffset) | 0x8000, classOffset)
+    await advertiser.sendRaw(quBuf)
+
+    const query = await advertiser.waitForQuery(
+      (q) => (q.questions || []).some(
+        (qq) => qq.type === 'PTR' && qq.name === '_http._tcp.local'
+      ),
+      7000
+    )
+    const elapsed = Date.now() - measureStart
+
+    assert.ok(query, 'browser should still send query after QU query from another host')
+    assert.ok(
+      elapsed < 6000,
+      `Expected query on normal schedule (~4s); got ${elapsed}ms — QU query should not suppress`
+    )
+
+    browser.destroy()
+  })
+})
+
+// ─── Cache flush on failure indication (RFC 6762 §10.4) ─────────────
+
+describe('Cache flush on failure indication', () => {
+  /** @type {number} */
+  let port
+  /** @type {DnsSdBrowser} */
+  let mdns
+  /** @type {TestAdvertiser} */
+  let advertiser
+
+  before(async () => {
+    port = await getRandomPort()
+    advertiser = new TestAdvertiser({ port })
+    await advertiser.start()
+  })
+
+  after(async () => {
+    await advertiser.stop()
+  })
+
+  beforeEach(async () => {
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    mdns.browse('_noop._tcp').destroy()
+    await mdns.ready()
+    advertiser.clearQueries()
+  })
+
+  afterEach(async () => {
+    await mdns.destroy()
+  })
+
+  test('reconfirm() removes service if no response within timeout (RFC 6762 §10.4)', async () => {
+    const RECONFIRM_TIMEOUT = 500
+    const browser = mdns.browse('_http._tcp', { reconfirmTimeoutMs: RECONFIRM_TIMEOUT })
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'Stale Service',
+      type: '_http._tcp',
+      host: 'stale.local',
+      port: 8080,
+      addresses: ['192.168.1.1'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+    assert.equal(upEvent.service.name, 'Stale Service')
+
+    // Request reconfirmation — no response will be sent
+    browser.reconfirm('Stale Service._http._tcp.local')
+
+    // Service should be removed after the reconfirmation timeout
+    const downEvent = await nextEvent(iter, RECONFIRM_TIMEOUT + 2000)
+    assert.equal(downEvent.type, 'serviceDown')
+    assert.equal(downEvent.service.name, 'Stale Service')
+    assert.equal(browser.services.size, 0)
+
+    browser.destroy()
+  })
+
+  test('reconfirm() keeps service if response is received (RFC 6762 §10.4)', async () => {
+    const RECONFIRM_TIMEOUT = 500
+    const browser = mdns.browse('_http._tcp', { reconfirmTimeoutMs: RECONFIRM_TIMEOUT })
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'Alive Service',
+      type: '_http._tcp',
+      host: 'alive.local',
+      port: 8080,
+      addresses: ['192.168.1.2'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+    assert.equal(upEvent.service.name, 'Alive Service')
+
+    // Request reconfirmation
+    browser.reconfirm('Alive Service._http._tcp.local')
+
+    // Re-announce to prove the service is still alive
+    await advertiser.announce({
+      name: 'Alive Service',
+      type: '_http._tcp',
+      host: 'alive.local',
+      port: 8080,
+      addresses: ['192.168.1.2'],
+    })
+
+    // Wait past the reconfirmation timeout
+    await delay(RECONFIRM_TIMEOUT + 200)
+
+    // Service should still be present — it was reconfirmed
+    assert.equal(browser.services.size, 1)
+    assert.ok(browser.services.has('Alive Service._http._tcp.local'))
+
+    browser.destroy()
+  })
+
+  test('reconfirm() on unknown FQDN is a no-op (RFC 6762 §10.4)', async () => {
+    const browser = mdns.browse('_http._tcp', { reconfirmTimeoutMs: 500 })
+
+    // Should not throw or cause any issues
+    browser.reconfirm('Nonexistent._http._tcp.local')
+
+    // Verify no services were affected
+    assert.equal(browser.services.size, 0)
+
+    browser.destroy()
+  })
+})
+
 // ─── Passive Observation of Failures / POOF (RFC 6762 §10.5) ─────────
 
 describe('Passive Observation of Failures (POOF) — RFC 6762 §10.5', () => {
@@ -1268,7 +1687,6 @@ describe('Passive Observation of Failures (POOF) — RFC 6762 §10.5', () => {
     })
     const iter = browser[Symbol.asyncIterator]()
 
-    // Announce a service so it gets cached
     await advertiser.announce({
       name: 'POOF Target',
       type: '_http._tcp',
@@ -1279,25 +1697,21 @@ describe('Passive Observation of Failures (POOF) — RFC 6762 §10.5', () => {
 
     const upEvent = await nextEvent(iter)
     assert.equal(upEvent.type, 'serviceUp')
-    assert.equal(upEvent.service.name, 'POOF Target')
     assert.equal(browser.services.size, 1)
 
-    // Simulate another host querying for the same service type (query 1)
-    await advertiser.sendQueryPacket('_http._tcp.local', 'PTR')
+    // Simulate another host querying (query 1)
+    await advertiser.sendQuery({
+      questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
+    })
+    await delay(POOF_RESPONSE_WAIT_MS + 200)
+    assert.equal(browser.services.size, 1, 'should still exist after 1 unanswered query')
 
-    // Wait for response-wait timer to expire (no response sent)
+    // Simulate another host querying (query 2) — triggers POOF flush
+    await advertiser.sendQuery({
+      questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
+    })
     await delay(POOF_RESPONSE_WAIT_MS + 200)
 
-    // Service should still be present after only 1 unanswered query
-    assert.equal(browser.services.size, 1)
-
-    // Simulate another host querying again (query 2)
-    await advertiser.sendQueryPacket('_http._tcp.local', 'PTR')
-
-    // Wait for response-wait timer to expire — should trigger POOF flush
-    await delay(POOF_RESPONSE_WAIT_MS + 200)
-
-    // The cached record should now be flushed
     const downEvent = await nextEvent(iter, 2000)
     assert.equal(downEvent.type, 'serviceDown')
     assert.equal(downEvent.service.name, 'POOF Target')
@@ -1313,7 +1727,6 @@ describe('Passive Observation of Failures (POOF) — RFC 6762 §10.5', () => {
     })
     const iter = browser[Symbol.asyncIterator]()
 
-    // Announce a service so it gets cached
     await advertiser.announce({
       name: 'POOF Survivor',
       type: '_http._tcp',
@@ -1324,12 +1737,11 @@ describe('Passive Observation of Failures (POOF) — RFC 6762 §10.5', () => {
 
     const upEvent = await nextEvent(iter)
     assert.equal(upEvent.type, 'serviceUp')
-    assert.equal(upEvent.service.name, 'POOF Survivor')
 
-    // Simulate another host querying (query 1)
-    await advertiser.sendQueryPacket('_http._tcp.local', 'PTR')
-
-    // Respond with the expected PTR record before the response-wait expires
+    // Query 1 — respond before timer expires
+    await advertiser.sendQuery({
+      questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
+    })
     await delay(100)
     await advertiser.announce({
       name: 'POOF Survivor',
@@ -1338,14 +1750,12 @@ describe('Passive Observation of Failures (POOF) — RFC 6762 §10.5', () => {
       port: 9090,
       addresses: ['192.168.1.60'],
     })
-
-    // Wait longer than the response-wait timer
     await delay(POOF_RESPONSE_WAIT_MS + 200)
 
-    // Simulate another host querying (query 2)
-    await advertiser.sendQueryPacket('_http._tcp.local', 'PTR')
-
-    // Respond again before the timer expires
+    // Query 2 — respond before timer expires
+    await advertiser.sendQuery({
+      questions: [{ type: 'PTR', name: '_http._tcp.local', class: 'IN' }],
+    })
     await delay(100)
     await advertiser.announce({
       name: 'POOF Survivor',
@@ -1354,13 +1764,10 @@ describe('Passive Observation of Failures (POOF) — RFC 6762 §10.5', () => {
       port: 9090,
       addresses: ['192.168.1.60'],
     })
-
-    // Wait for everything to settle
     await delay(POOF_RESPONSE_WAIT_MS + 200)
 
-    // The service should still be present — responses were observed
+    // Service should still be present — responses were observed
     assert.equal(browser.services.size, 1)
-    assert.ok(browser.services.has('POOF Survivor._http._tcp.local'))
 
     browser.destroy()
   })

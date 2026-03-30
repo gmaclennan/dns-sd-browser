@@ -579,3 +579,189 @@ describe('Advertiser leniency: missing records', () => {
     browser.destroy()
   })
 })
+
+// ─── Android NSD quirks ──────────────────────────────────────────────────────
+// Tests for specific mDNS advertising quirks found in Android's NsdManager
+// implementation across versions 7–14+. Android uses mdnsd (Apple
+// mDNSResponder fork) on Android 7–12 and a Java-based mDNS stack on 13+.
+
+describe('Advertiser leniency: Android NSD quirks', () => {
+  /** @type {number} */
+  let port
+  /** @type {DnsSdBrowser} */
+  let mdns
+  /** @type {TestAdvertiser} */
+  let advertiser
+
+  before(async () => {
+    port = await getRandomPort()
+    advertiser = new TestAdvertiser({ port })
+    await advertiser.start()
+  })
+
+  after(async () => {
+    await advertiser.stop()
+  })
+
+  beforeEach(async () => {
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    mdns.browse('_noop._tcp').destroy()
+    await mdns.ready()
+    advertiser.clearQueries()
+  })
+
+  afterEach(async () => {
+    await mdns.destroy()
+  })
+
+  test('handles shared "Android.local" hostname from multiple devices', async () => {
+    // Android 7–12 hardcodes the mDNS hostname to "Android.local" for all
+    // devices (AOSP mDNSPosix.c: GetUserSpecifiedRFC1034ComputerName).
+    // Two different services from different devices share the same SRV target.
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    // Device A announces service with Android.local → 192.168.1.10
+    await advertiser.sendRaw(dnsPacket.encode({
+      type: 'response',
+      id: 0,
+      flags: dnsPacket.AUTHORITATIVE_ANSWER,
+      answers: [
+        {
+          type: 'PTR',
+          name: '_http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          data: 'DeviceA._http._tcp.local',
+        },
+        {
+          type: 'SRV',
+          name: 'DeviceA._http._tcp.local',
+          ttl: 120,
+          class: 'IN',
+          flush: true,
+          data: { target: 'Android.local', port: 8080, priority: 0, weight: 0 },
+        },
+        {
+          type: 'TXT',
+          name: 'DeviceA._http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          flush: true,
+          data: ['id=device-a'],
+        },
+      ],
+      additionals: [{
+        type: 'A',
+        name: 'Android.local',
+        ttl: 120,
+        class: 'IN',
+        flush: true,
+        data: '192.168.1.10',
+      }],
+    }))
+
+    const eventA = await nextEvent(iter)
+    assert.equal(eventA.type, 'serviceUp')
+    assert.equal(eventA.service.name, 'DeviceA')
+    assert.equal(eventA.service.host, 'Android.local')
+    assert.ok(eventA.service.addresses.includes('192.168.1.10'))
+
+    // Device B announces a different service also using Android.local → 192.168.1.20
+    await advertiser.sendRaw(dnsPacket.encode({
+      type: 'response',
+      id: 0,
+      flags: dnsPacket.AUTHORITATIVE_ANSWER,
+      answers: [
+        {
+          type: 'PTR',
+          name: '_http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          data: 'DeviceB._http._tcp.local',
+        },
+        {
+          type: 'SRV',
+          name: 'DeviceB._http._tcp.local',
+          ttl: 120,
+          class: 'IN',
+          flush: true,
+          data: { target: 'Android.local', port: 9090, priority: 0, weight: 0 },
+        },
+        {
+          type: 'TXT',
+          name: 'DeviceB._http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          flush: true,
+          data: ['id=device-b'],
+        },
+      ],
+      additionals: [{
+        type: 'A',
+        name: 'Android.local',
+        ttl: 120,
+        class: 'IN',
+        flush: true,
+        data: '192.168.1.20',
+      }],
+    }))
+
+    const eventB = await nextEvent(iter)
+    assert.equal(eventB.type, 'serviceUp')
+    assert.equal(eventB.service.name, 'DeviceB')
+    assert.equal(eventB.service.port, 9090)
+    assert.ok(eventB.service.addresses.includes('192.168.1.20'))
+
+    browser.destroy()
+  })
+
+  test('handles service name with conflict resolution suffix "MyService (2)"', async () => {
+    // When Android detects a service name conflict on the network, it appends
+    // " (N)" to the name (e.g. "MyService" → "MyService (2)"). The parentheses
+    // and spaces are valid in DNS-SD instance names (RFC 6763 §4.1.1).
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'MyService (2)',
+      type: '_http._tcp',
+      host: 'android.local',
+      port: 3000,
+      addresses: ['10.0.0.3'],
+      txt: { id: 'conflict-resolved' },
+    })
+
+    const event = await nextEvent(iter)
+    assert.equal(event.type, 'serviceUp')
+    assert.equal(event.service.name, 'MyService (2)')
+    assert.equal(event.service.port, 3000)
+    assert.equal(event.service.txt.id, 'conflict-resolved')
+
+    browser.destroy()
+  })
+
+  test('handles long hostname from newer Android devices (40+ bytes)', async () => {
+    // Android 13+ (Java mDNS stack) can advertise hostnames with 40+ bytes,
+    // e.g. a UUID-based hostname like "Android_<UUID>.local".
+    const longHost = 'Android_25101c8afe6a479387b1d63318378d56.local'
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'LongHost',
+      type: '_http._tcp',
+      host: longHost,
+      port: 4000,
+      addresses: ['10.0.0.5'],
+    })
+
+    const event = await nextEvent(iter)
+    assert.equal(event.type, 'serviceUp')
+    assert.equal(event.service.host, longHost)
+    assert.equal(event.service.port, 4000)
+
+    browser.destroy()
+  })
+
+})

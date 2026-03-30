@@ -309,18 +309,18 @@ export class TestAdvertiser {
   }
 
   /**
-   * Send an mDNS query packet (QR=0) for a service type.
-   * Used to simulate another host querying for services (POOF testing).
-   * @param {string} name - Query name (e.g. "_http._tcp.local")
-   * @param {string} [type='PTR'] - Query type
-   * @returns {Promise<void>}
+   * Send an mDNS query packet (QR=0) for duplicate question suppression testing.
+   * @param {object} options
+   * @param {dnsPacket.Question[]} options.questions
+   * @param {dnsPacket.Answer[]} [options.answers] - Known-Answer section
    */
-  async sendQueryPacket(name, type = 'PTR') {
+  async sendQuery({ questions, answers = [] }) {
     const packet = dnsPacket.encode({
       type: 'query',
       id: 0,
       flags: 0,
-      questions: [{ type, name, class: 'IN' }],
+      questions,
+      answers,
     })
     await this.#send(packet)
   }
