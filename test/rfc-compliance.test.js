@@ -181,6 +181,9 @@ describe('Cache and TTL management', () => {
     assert.equal(upEvent.type, 'serviceUp')
     assert.ok(upEvent.service.addresses.includes('192.168.1.1'))
 
+    // Wait >1s so the old address is outside the cache-flush grace period
+    await delay(1100)
+
     // Send an A record WITH cache-flush — should replace, not merge
     const addrUpdate = dnsPacket.encode({
       type: 'response',
@@ -203,6 +206,53 @@ describe('Cache and TTL management', () => {
     assert.equal(updateEvent.type, 'serviceUpdated')
     // Old address should be flushed, only new one present
     assert.deepEqual(updateEvent.service.addresses, ['10.0.0.2'])
+
+    browser.destroy()
+  })
+
+  test('cache-flush within 1s grace period merges addresses (RFC 6762 §10.2)', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    await advertiser.announce({
+      name: 'Addr Grace',
+      type: '_http._tcp',
+      host: 'addrgrace.local',
+      port: 80,
+      addresses: ['192.168.1.1'],
+    })
+
+    const upEvent = await nextEvent(iter)
+    assert.equal(upEvent.type, 'serviceUp')
+    assert.ok(upEvent.service.addresses.includes('192.168.1.1'))
+
+    // Immediately send a cache-flush address update (within 1 second)
+    // Per RFC 6762 §10.2, the old address should be kept because it was
+    // received less than 1 second ago (grace period for multi-packet bursts)
+    const addrUpdate = dnsPacket.encode({
+      type: 'response',
+      id: 0,
+      flags: dnsPacket.AUTHORITATIVE_ANSWER,
+      answers: [
+        {
+          type: 'A',
+          name: 'addrgrace.local',
+          ttl: 120,
+          class: 'IN',
+          flush: true,
+          data: '10.0.0.3',
+        },
+      ],
+    })
+    await advertiser.sendRaw(addrUpdate)
+
+    const updateEvent = await nextEvent(iter)
+    assert.equal(updateEvent.type, 'serviceUpdated')
+    // Both addresses should be present — old one kept due to grace period
+    assert.ok(updateEvent.service.addresses.includes('192.168.1.1'),
+      'old address should be kept within 1s grace period')
+    assert.ok(updateEvent.service.addresses.includes('10.0.0.3'),
+      'new address should be added')
 
     browser.destroy()
   })
