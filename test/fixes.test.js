@@ -365,36 +365,27 @@ describe('Fix: single-consumer async iterator enforcement', () => {
     browser.destroy()
   })
 
-  test('allows a new iterator after the previous one returns done', async () => {
+  test('allows a new iterator after the previous one ends via destroy', async () => {
     const browser = mdns.browse('_http._tcp')
     const iter1 = browser[Symbol.asyncIterator]()
 
-    // End the first iterator via return()
-    await iter1.return()
-
-    // A new browser is needed since return() destroys the browser.
-    // So let's test with a fresh browser that we destroy and re-iterate.
-    const browser2 = mdns.browse('_http._tcp')
-    const iter2 = browser2[Symbol.asyncIterator]()
-
-    // Destroy ends the iterator, allowing a new one
-    browser2.destroy()
-    const result = await iter2.next()
+    // Destroy ends the iterator
+    browser.destroy()
+    const result = await iter1.next()
     assert.equal(result.done, true)
 
-    // After the iterator ends (done=true), we should be able to create a new one
-    // (though it will immediately return done since browser is destroyed)
-    const iter3 = browser2[Symbol.asyncIterator]()
-    const result2 = await iter3.next()
+    // After the iterator ends (done=true), creating a new one should not throw
+    // (it will immediately return done since browser is destroyed)
+    const iter2 = browser[Symbol.asyncIterator]()
+    const result2 = await iter2.next()
     assert.equal(result2.done, true)
   })
 })
 
 describe('Fix: transport start error surfacing', () => {
-  test('ready() surfaces the underlying transport error', async () => {
+  test('ready() surfaces the underlying transport error', async (t) => {
     // Use a port that requires elevated privileges to reliably cause a bind error.
     // On Linux, binding to a well-known port (< 1024) as non-root should fail.
-    // If it doesn't fail (e.g. running as root), skip the test.
     const mdns = new DnsSdBrowser({ port: 1 })
 
     // Trigger start
@@ -403,10 +394,12 @@ describe('Fix: transport start error surfacing', () => {
     // Give the start promise time to settle
     await new Promise((r) => setTimeout(r, 200))
 
+    let threw = false
     try {
       await mdns.ready()
-      // If ready() didn't throw, the port bind succeeded (running as root) — skip
+      // If ready() didn't throw, the port bind succeeded (e.g. running as root)
     } catch (err) {
+      threw = true
       // The error should be the real bind error, not a generic message
       assert.ok(err instanceof Error)
       assert.ok(
@@ -415,6 +408,10 @@ describe('Fix: transport start error surfacing', () => {
       )
     } finally {
       await mdns.destroy()
+    }
+
+    if (!threw) {
+      t.skip('port 1 bind succeeded (likely running as root)')
     }
   })
 })

@@ -13,6 +13,7 @@ import dnsPacket from 'dns-packet'
 import { DnsSdBrowser } from '../lib/index.js'
 import { TestAdvertiser } from './helpers/advertiser.js'
 import { nextEvent, getRandomPort, delay, TEST_INTERFACE } from './helpers/utils.js'
+import { QU_CLASS, QM_CLASS, setTCBit } from './helpers/dns-packet-utils.js'
 
 // ─── TTL-based cache expiration ─────────────────────────────────────────
 
@@ -112,8 +113,10 @@ describe('TTL-based cache expiration', () => {
     const browser = mdns.browse('_http._tcp')
     const iter = browser[Symbol.asyncIterator]()
 
-    // Announce with 2s TTL
-    const mkPacket = (ttl) => dnsPacket.encode({
+    // Also announce a short-TTL service that we do NOT refresh — it should
+    // expire, proving that TTL expiration is working. This serves as a
+    // positive control: if both services survive, the test is inconclusive.
+    const mkPacket = (name, host, ttl) => dnsPacket.encode({
       type: 'response',
       id: 0,
       flags: dnsPacket.AUTHORITATIVE_ANSWER,
@@ -123,19 +126,19 @@ describe('TTL-based cache expiration', () => {
           name: '_http._tcp.local',
           ttl,
           class: 'IN',
-          data: 'Refreshed._http._tcp.local',
+          data: `${name}._http._tcp.local`,
         },
         {
           type: 'SRV',
-          name: 'Refreshed._http._tcp.local',
+          name: `${name}._http._tcp.local`,
           ttl,
           class: 'IN',
           flush: true,
-          data: { target: 'refresh.local', port: 80, priority: 0, weight: 0 },
+          data: { target: `${host}.local`, port: 80, priority: 0, weight: 0 },
         },
         {
           type: 'TXT',
-          name: 'Refreshed._http._tcp.local',
+          name: `${name}._http._tcp.local`,
           ttl,
           class: 'IN',
           flush: true,
@@ -145,7 +148,7 @@ describe('TTL-based cache expiration', () => {
       additionals: [
         {
           type: 'A',
-          name: 'refresh.local',
+          name: `${host}.local`,
           ttl,
           class: 'IN',
           data: '192.168.1.1',
@@ -153,17 +156,32 @@ describe('TTL-based cache expiration', () => {
       ],
     })
 
-    await advertiser.sendRaw(mkPacket(2))
-    const upEvent = await nextEvent(iter)
-    assert.equal(upEvent.type, 'serviceUp')
+    // Announce both with 2s TTL
+    await advertiser.sendRaw(mkPacket('Refreshed', 'refresh', 2))
+    const upEvent1 = await nextEvent(iter)
+    assert.equal(upEvent1.type, 'serviceUp')
+    assert.equal(upEvent1.service.name, 'Refreshed')
 
-    // Refresh the TTL before it expires (re-announce with fresh TTL)
+    await advertiser.sendRaw(mkPacket('NotRefreshed', 'norefresh', 2))
+    const upEvent2 = await nextEvent(iter)
+    assert.equal(upEvent2.type, 'serviceUp')
+    assert.equal(upEvent2.service.name, 'NotRefreshed')
+
+    // Refresh ONLY the first service's TTL before it expires
     await delay(1000)
-    await advertiser.sendRaw(mkPacket(4500))
+    await advertiser.sendRaw(mkPacket('Refreshed', 'refresh', 4500))
 
-    // Wait past the original 2s TTL — service should still be alive
-    await delay(2000)
-    assert.equal(browser.services.size, 1, 'service should still exist after TTL refresh')
+    // Wait for the un-refreshed service to expire — this proves TTL
+    // expiration is working and the refreshed service survived intentionally
+    const downEvent = await nextEvent(iter, 5000)
+    assert.equal(downEvent.type, 'serviceDown')
+    assert.equal(downEvent.service.name, 'NotRefreshed')
+
+    // The refreshed service should still be alive
+    assert.ok(
+      browser.services.has('Refreshed._http._tcp.local'),
+      'refreshed service should still exist'
+    )
 
     browser.destroy()
   })
@@ -213,7 +231,7 @@ describe('QU bit on initial queries (RFC 6762 §5.4)', () => {
     // (0x8001 = IN class with QU bit set).
     const question = query.questions?.find((q) => q.type === 'PTR')
     assert.ok(question, 'should have PTR question')
-    assert.equal(question?.class, 'UNKNOWN_32769', 'first query should have QU bit set')
+    assert.equal(question?.class, QU_CLASS, 'first query should have QU bit set')
 
     browser.destroy()
   })
@@ -237,7 +255,7 @@ describe('QU bit on initial queries (RFC 6762 §5.4)', () => {
     const question = query.questions?.find((q) => q.type === 'PTR')
     assert.ok(question, 'should have PTR question')
     // Subsequent queries should NOT have QU bit — class should be IN
-    assert.equal(question?.class, 'IN', 'subsequent query should not have QU bit (class should be IN)')
+    assert.equal(question?.class, QM_CLASS, 'subsequent query should not have QU bit (class should be IN)')
 
     browser.destroy()
   })
@@ -456,15 +474,13 @@ describe('TC (truncated) bit handling (RFC 6762 §18.5)', () => {
         },
       ],
     })
-    // Set TC bit: byte 2, bit 9 (0x02 in byte 2)
-    buf[2] = buf[2] | 0x02
+    setTCBit(buf)
     await advertiser.sendRaw(buf)
 
     // The browser should re-query with QU bit set.
-    // dns-packet decodes QU as class 'UNKNOWN_32769'.
     const retryQuery = await advertiser.waitForQuery(
       (q) => (q.questions || []).some(
-        (qq) => qq.type === 'PTR' && qq.name === '_http._tcp.local' && qq.class === 'UNKNOWN_32769'
+        (qq) => qq.type === 'PTR' && qq.name === '_http._tcp.local' && qq.class === QU_CLASS
       ),
       5000
     )
@@ -519,8 +535,7 @@ describe('TC (truncated) bit handling (RFC 6762 §18.5)', () => {
         },
       ],
     })
-    // Set TC bit
-    buf[2] = buf[2] | 0x02
+    setTCBit(buf)
     await advertiser.sendRaw(buf)
 
     // Should still process the complete records from the truncated packet
@@ -664,7 +679,7 @@ describe('Network rejoin (mdns.rejoin())', () => {
 
     const question = query.questions?.find((q) => q.type === 'PTR')
     assert.ok(question, 'should have PTR question')
-    assert.equal(question?.class, 'UNKNOWN_32769', 'first query after rejoin should have QU bit set')
+    assert.equal(question?.class, QU_CLASS, 'first query after rejoin should have QU bit set')
 
     browser.destroy()
   })

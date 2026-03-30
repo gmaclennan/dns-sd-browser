@@ -12,6 +12,7 @@ import dnsPacket from 'dns-packet'
 import { DnsSdBrowser } from '../lib/index.js'
 import { TestAdvertiser } from './helpers/advertiser.js'
 import { nextEvent, getRandomPort, delay, TEST_INTERFACE } from './helpers/utils.js'
+import { setResponseNoAA, setRcode } from './helpers/dns-packet-utils.js'
 
 describe('Advertiser leniency: split responses', () => {
   /** @type {number} */
@@ -240,8 +241,7 @@ describe('Advertiser leniency: non-zero rcode', () => {
         data: '10.0.0.1',
       }],
     })
-    // Set rcode to 3 (NXDOMAIN)
-    buf[3] = (buf[3] & 0xf0) | 0x03
+    setRcode(buf, 3) // NXDOMAIN
     await advertiser.sendRaw(buf)
 
     const event = await nextEvent(iter)
@@ -567,9 +567,7 @@ describe('Advertiser leniency: missing records', () => {
         data: '10.0.0.1',
       }],
     })
-    // Ensure QR bit is set (response) but AA is not
-    buf[2] = 0x80 // QR=1, AA=0, opcode=0
-    buf[3] = 0x00 // rcode=0
+    setResponseNoAA(buf)
     await advertiser.sendRaw(buf)
 
     const event = await nextEvent(iter)
