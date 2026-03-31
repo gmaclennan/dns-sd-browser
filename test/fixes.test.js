@@ -400,6 +400,38 @@ describe('Fix: single-consumer async iterator enforcement', () => {
       /Browser has been destroyed/
     )
   })
+
+  test('removeService() after destroy throws', () => {
+    const browser = mdns.browse('_http._tcp')
+    browser.destroy()
+
+    assert.throws(
+      () => browser.removeService('anything._http._tcp.local'),
+      /Browser has been destroyed/
+    )
+  })
+
+  test('reconfirm() after destroy throws', () => {
+    const browser = mdns.browse('_http._tcp')
+    browser.destroy()
+
+    assert.throws(
+      () => browser.reconfirm('anything._http._tcp.local'),
+      /Browser has been destroyed/
+    )
+  })
+
+  test('DnsSdBrowser.rejoin() after destroy throws', async () => {
+    const fresh = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    fresh.browse('_noop._tcp').destroy()
+    await fresh.ready()
+    await fresh.destroy()
+
+    assert.throws(
+      () => fresh.rejoin(),
+      /has been destroyed/
+    )
+  })
 })
 
 describe('Fix: ready() before browse() throws', () => {
