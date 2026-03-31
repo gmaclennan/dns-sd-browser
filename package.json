@@ -1,6 +1,6 @@
 {
   "name": "dns-sd-browser",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Spec-compliant DNS-SD browser over mDNS for Node.js",
   "type": "module",
   "exports": {
