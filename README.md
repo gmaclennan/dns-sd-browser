@@ -307,6 +307,8 @@ Without calling `rejoin()`, previously discovered services would still eventuall
 
 All previously known services are flushed as `serviceDown` because the browser cannot know whether you reconnected to the same network or a different one. On a different network those services don't exist; on the same network they will be re-discovered within seconds via the restarted query schedule.
 
+Unlike `destroy()` followed by a new `browse()`, `rejoin()` is a lightweight operation that preserves the existing sockets and async iterators. The UDP socket binding and multicast group membership are refreshed in-place, and consumers of the async iterator continue receiving events without interruption — first `serviceDown` for all previously known services, then `serviceUp` as services are rediscovered. With `destroy()`, the sockets are closed, all iterators end, and you would need to create a new `DnsSdBrowser` instance and call `browse()` again with fresh iterator references.
+
 ```js
 // Call from your application's network change handler
 mdns.rejoin()
