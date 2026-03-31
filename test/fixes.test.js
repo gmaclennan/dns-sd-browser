@@ -383,20 +383,22 @@ describe('Fix: single-consumer async iterator enforcement', () => {
     browser.destroy()
   })
 
-  test('allows a new iterator after the previous one ends via destroy', async () => {
+  test('existing iterator throws after destroy', async () => {
     const browser = mdns.browse('_http._tcp')
-    const iter1 = browser[Symbol.asyncIterator]()
+    const iter = browser[Symbol.asyncIterator]()
 
-    // Destroy ends the iterator
     browser.destroy()
-    const result = await iter1.next()
-    assert.equal(result.done, true)
+    await assert.rejects(iter.next(), /Browser has been destroyed/)
+  })
 
-    // After the iterator ends (done=true), creating a new one should not throw
-    // (it will immediately return done since browser is destroyed)
-    const iter2 = browser[Symbol.asyncIterator]()
-    const result2 = await iter2.next()
-    assert.equal(result2.done, true)
+  test('creating a new iterator after destroy throws', () => {
+    const browser = mdns.browse('_http._tcp')
+    browser.destroy()
+
+    assert.throws(
+      () => browser[Symbol.asyncIterator](),
+      /Browser has been destroyed/
+    )
   })
 })
 
@@ -444,12 +446,12 @@ describe('Fix: browse() with pre-aborted signal', () => {
     controller.abort()
 
     const browser = mdns.browse('_http._tcp', { signal: controller.signal })
-    const iter = browser[Symbol.asyncIterator]()
 
-    await assert.rejects(iter.next(), (err) => {
-      assert.equal(err.name, 'AbortError')
-      return true
-    })
+    // Browser is destroyed synchronously — creating an iterator should throw
+    assert.throws(
+      () => browser[Symbol.asyncIterator](),
+      /Browser has been destroyed/
+    )
   })
 })
 

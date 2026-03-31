@@ -718,13 +718,12 @@ describe('Service type enumeration', () => {
     controller.abort()
 
     const browser = mdns.browseAll({ signal: controller.signal })
-    const iter = browser[Symbol.asyncIterator]()
 
-    // AbortSignal should throw, matching Node.js convention
-    await assert.rejects(iter.next(), (err) => {
-      assert.equal(err.name, 'AbortError')
-      return true
-    })
+    // Browser is destroyed synchronously — creating an iterator should throw
+    assert.throws(
+      () => browser[Symbol.asyncIterator](),
+      /Browser has been destroyed/
+    )
   })
 
   test('browseAll() rejects concurrent async iterators', async () => {
@@ -915,7 +914,7 @@ describe('API surface', () => {
     await delay(500)
 
     browser.destroy()
-    await iterationDone // Should resolve because destroy ends the iterator
+    await assert.rejects(iterationDone, /Browser has been destroyed/)
 
     assert.ok(events.length >= 1, 'should have received at least one event')
     await mdns.destroy()
@@ -975,7 +974,7 @@ describe('API surface', () => {
     await mdns.destroy()
   })
 
-  test('destroy() without abort ends iteration cleanly (no throw)', async () => {
+  test('destroy() without abort throws "Browser has been destroyed"', async () => {
     const mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
     const browser = mdns.browse('_http._tcp')
     await mdns.ready()
@@ -989,8 +988,7 @@ describe('API surface', () => {
     await delay(100)
     browser.destroy()
 
-    // Should resolve without throwing
-    await iterationDone
+    await assert.rejects(iterationDone, /Browser has been destroyed/)
     await mdns.destroy()
   })
 
@@ -1010,9 +1008,9 @@ describe('API surface', () => {
     await delay(200)
     await mdns.destroy()
 
-    // Both iterations should complete after destroy
-    await done1
-    await done2
+    // Both iterations should reject after destroy
+    await assert.rejects(done1, /Browser has been destroyed/)
+    await assert.rejects(done2, /Browser has been destroyed/)
   })
 
   test('Symbol.asyncDispose support', async () => {
@@ -1092,8 +1090,7 @@ describe('API surface', () => {
 
     await browser[Symbol.asyncDispose]()
 
-    const result = await iter.next()
-    assert.equal(result.done, true)
+    await assert.rejects(iter.next(), /Browser has been destroyed/)
 
     await mdns.destroy()
   })
@@ -1127,9 +1124,8 @@ describe('API surface', () => {
     await delay(100)
     browser.destroy()
 
-    // After destroy, the iterator should end cleanly (done=true)
-    const result = await iter.next()
-    assert.equal(result.done, true)
+    // After destroy, the iterator should throw
+    await assert.rejects(iter.next(), /Browser has been destroyed/)
 
     // Wait past the goodbye timeout — no serviceDown should be emitted
     // and no errors should be thrown from orphaned timers
