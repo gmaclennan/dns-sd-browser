@@ -411,43 +411,45 @@ describe('Fix: ready() before browse() throws', () => {
   })
 })
 
-describe('Fix: ServiceBrowser with pre-aborted signal', () => {
+describe('Fix: browse() with pre-aborted signal', () => {
   /** @type {number} */
   let port
   /** @type {DnsSdBrowser} */
   let mdns
-  /** @type {import('../lib/transport.js').MdnsTransport} */
-  let transport
+  /** @type {TestAdvertiser} */
+  let advertiser
 
   before(async () => {
     port = await getRandomPort()
+    advertiser = new TestAdvertiser({ port })
+    await advertiser.start()
   })
 
-  test('ServiceBrowser with already-aborted signal is immediately destroyed', async () => {
-    // Use a real transport to avoid mocking
-    const { MdnsTransport } = await import('../lib/transport.js')
-    transport = new MdnsTransport({ port, interface: TEST_INTERFACE })
-    await transport.start()
+  after(async () => {
+    await advertiser.stop()
+  })
 
+  beforeEach(async () => {
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    mdns.browse('_noop._tcp').destroy()
+    await mdns.ready()
+  })
+
+  afterEach(async () => {
+    await mdns.destroy()
+  })
+
+  test('browse() with already-aborted signal is immediately destroyed', async () => {
     const controller = new AbortController()
     controller.abort()
 
-    const browser = new ServiceBrowser(transport, {
-      queryName: '_http._tcp.local',
-      serviceType: '_http._tcp',
-      domain: 'local',
-      protocol: 'tcp',
-      signal: controller.signal,
-    })
-
+    const browser = mdns.browse('_http._tcp', { signal: controller.signal })
     const iter = browser[Symbol.asyncIterator]()
 
     await assert.rejects(iter.next(), (err) => {
       assert.equal(err.name, 'AbortError')
       return true
     })
-
-    await transport.destroy()
   })
 })
 
