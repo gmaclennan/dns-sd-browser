@@ -271,6 +271,24 @@ describe('Fix: parseTxtData duplicate handling and edge cases', () => {
   })
 })
 
+describe('Fix: parseServiceType validation', () => {
+  test('rejects null/undefined service type object', () => {
+    assert.throws(() => parseServiceType(null), /non-empty "name" property/)
+  })
+
+  test('rejects service type object with empty name', () => {
+    assert.throws(() => parseServiceType({ name: '' }), /non-empty "name" property/)
+  })
+
+  test('rejects non-string, non-object service type', () => {
+    assert.throws(() => parseServiceType(123), /non-empty string/)
+  })
+
+  test('rejects empty string service type', () => {
+    assert.throws(() => parseServiceType(''), /non-empty string/)
+  })
+})
+
 describe('Fix: parseServiceType edge cases', () => {
   test('parses 3-part string with .local suffix', () => {
     const result = parseServiceType('_http._tcp.local')
@@ -379,6 +397,57 @@ describe('Fix: single-consumer async iterator enforcement', () => {
     const iter2 = browser[Symbol.asyncIterator]()
     const result2 = await iter2.next()
     assert.equal(result2.done, true)
+  })
+})
+
+describe('Fix: ready() before browse() throws', () => {
+  test('throws when ready() is called before any browse()', async () => {
+    const mdns = new DnsSdBrowser()
+    await assert.rejects(
+      () => mdns.ready(),
+      /Cannot call ready\(\) before browse\(\)/
+    )
+    await mdns.destroy()
+  })
+})
+
+describe('Fix: ServiceBrowser with pre-aborted signal', () => {
+  /** @type {number} */
+  let port
+  /** @type {DnsSdBrowser} */
+  let mdns
+  /** @type {import('../lib/transport.js').MdnsTransport} */
+  let transport
+
+  before(async () => {
+    port = await getRandomPort()
+  })
+
+  test('ServiceBrowser with already-aborted signal is immediately destroyed', async () => {
+    // Use a real transport to avoid mocking
+    const { MdnsTransport } = await import('../lib/transport.js')
+    transport = new MdnsTransport({ port, interface: TEST_INTERFACE })
+    await transport.start()
+
+    const controller = new AbortController()
+    controller.abort()
+
+    const browser = new ServiceBrowser(transport, {
+      queryName: '_http._tcp.local',
+      serviceType: '_http._tcp',
+      domain: 'local',
+      protocol: 'tcp',
+      signal: controller.signal,
+    })
+
+    const iter = browser[Symbol.asyncIterator]()
+
+    await assert.rejects(iter.next(), (err) => {
+      assert.equal(err.name, 'AbortError')
+      return true
+    })
+
+    await transport.destroy()
   })
 })
 
