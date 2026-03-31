@@ -1,5 +1,9 @@
 # dns-sd-browser
 
+[![npm version](https://img.shields.io/npm/v/dns-sd-browser.svg)](https://www.npmjs.com/package/dns-sd-browser)
+[![GitHub CI](https://github.com/gmaclennan/dns-sd-browser/actions/workflows/test.yml/badge.svg)](https://github.com/gmaclennan/dns-sd-browser/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/gmaclennan/dns-sd-browser/graph/badge.svg?token=2OEmdcgaNa)](https://codecov.io/gh/gmaclennan/dns-sd-browser)
+
 Spec-compliant [DNS-SD](https://www.rfc-editor.org/rfc/rfc6763) browser over [Multicast DNS](https://www.rfc-editor.org/rfc/rfc6762) for Node.js.
 
 - **Async iterator API** — modern, backpressure-aware, no forgotten error handlers
