@@ -2,6 +2,7 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import dnsPacket from 'dns-packet'
 import * as dns from '../lib/dns.js'
+import { parseTxtData, extractInstanceName } from '../lib/service.js'
 
 /**
  * Integration tests for the DNS packet codec.
@@ -846,5 +847,147 @@ describe('Multi-packet known-answer splitting', () => {
       questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR }],
     })
     assert.equal(packets.length, 1)
+  })
+})
+
+describe('DNS name decoding edge cases', () => {
+  test('throws on pointer loop instead of returning partial data', () => {
+    const buf = Buffer.alloc(30)
+    buf.writeUInt16BE(0, 0)       // ID
+    buf.writeUInt16BE(0x8400, 2)  // Flags: QR=1, AA=1
+    buf.writeUInt16BE(1, 4)       // QDCOUNT = 1
+    buf.writeUInt16BE(0, 6)
+    buf.writeUInt16BE(0, 8)
+    buf.writeUInt16BE(0, 10)
+    // Self-referencing pointer at offset 12
+    buf.writeUInt16BE(0xC00C, 12)
+    buf.writeUInt16BE(1, 14)      // QTYPE = A
+    buf.writeUInt16BE(1, 16)      // QCLASS = IN
+
+    assert.throws(() => dns.decode(buf), /too many compression pointers/)
+  })
+
+  test('does not throw on 127 pointer hops followed by a null terminator', () => {
+    // 127 pointer hops + null terminator = 128 iterations of the decode loop.
+    // Each pointer consumes one iteration (with continue), then the null
+    // terminator consumes the 128th iteration and breaks. This exercises the
+    // exact boundary of the maxJumps counter.
+    const chainLen = 127
+    const dataOffset = 12 + chainLen * 2 // where the null terminator lives
+    const bufLen = dataOffset + 1 + 4    // null + QTYPE + QCLASS
+    const buf = Buffer.alloc(bufLen)
+
+    buf.writeUInt16BE(0, 0)       // ID
+    buf.writeUInt16BE(0x8400, 2)  // Flags: QR=1, AA=1
+    buf.writeUInt16BE(1, 4)       // QDCOUNT = 1
+    buf.writeUInt16BE(0, 6)
+    buf.writeUInt16BE(0, 8)
+    buf.writeUInt16BE(0, 10)
+
+    // Write 127 pointers: offset 12 -> 14 -> 16 -> ... -> dataOffset
+    for (let i = 0; i < chainLen; i++) {
+      const off = 12 + i * 2
+      const target = (i < chainLen - 1) ? 12 + (i + 1) * 2 : dataOffset
+      buf.writeUInt16BE(0xC000 | target, off)
+    }
+
+    // At dataOffset: null terminator (root name ".")
+    buf[dataOffset] = 0
+    buf.writeUInt16BE(1, dataOffset + 1) // QTYPE = A
+    buf.writeUInt16BE(1, dataOffset + 3) // QCLASS = IN
+
+    // Should decode successfully — not throw
+    const pkt = dns.decode(buf)
+    assert.equal(pkt.questions[0].name, '')
+  })
+
+  test('throws on oversized label length', () => {
+    const buf = Buffer.alloc(30)
+    buf.writeUInt16BE(0, 0)       // ID
+    buf.writeUInt16BE(0x8400, 2)  // Flags
+    buf.writeUInt16BE(1, 4)       // QDCOUNT = 1
+    buf.writeUInt16BE(0, 6)
+    buf.writeUInt16BE(0, 8)
+    buf.writeUInt16BE(0, 10)
+    // Label length 64 (exceeds MAX_LABEL_LENGTH of 63)
+    buf[12] = 64
+    // Fill with garbage
+    buf.fill(0x41, 13, 30)
+
+    assert.throws(() => dns.decode(buf), /label length/)
+  })
+})
+
+describe('TXT record parsing', () => {
+  test('first key wins for case-insensitive duplicates', () => {
+    const encoder = new TextEncoder()
+    const entries = [
+      encoder.encode('Key=first'),
+      encoder.encode('KEY=second'),
+      encoder.encode('key=third'),
+    ]
+    const { txt } = parseTxtData(entries)
+    assert.equal(txt.Key, 'first')
+    assert.equal(Object.keys(txt).length, 1)
+  })
+
+  test('handles boolean flags with duplicate detection', () => {
+    const encoder = new TextEncoder()
+    const entries = [
+      encoder.encode('Flag'),
+      encoder.encode('flag=not-a-flag'),
+    ]
+    const { txt } = parseTxtData(entries)
+    assert.equal(txt.Flag, true)
+    assert.equal(Object.keys(txt).length, 1)
+  })
+
+  test('TXT string beginning with = (missing key) is silently ignored per RFC 6763 §6.4', () => {
+    const encoder = new TextEncoder()
+    const { txt } = parseTxtData([encoder.encode('=value')])
+    assert.deepEqual(txt, {})
+  })
+
+  test('TXT with key=<empty> is parsed as empty string value', () => {
+    const encoder = new TextEncoder()
+    const { txt } = parseTxtData([encoder.encode('key=')])
+    assert.equal(txt.key, '')
+  })
+
+  test('TXT with value containing = signs preserves them', () => {
+    const encoder = new TextEncoder()
+    const { txt } = parseTxtData([encoder.encode('eq=a=b=c')])
+    assert.equal(txt.eq, 'a=b=c')
+  })
+
+  test('txtRaw contains raw Uint8Array for binary values', () => {
+    const encoder = new TextEncoder()
+    const { txtRaw } = parseTxtData([encoder.encode('bin=hello')])
+    assert.ok(txtRaw.bin instanceof Uint8Array)
+    assert.equal(new TextDecoder().decode(txtRaw.bin), 'hello')
+  })
+
+  test('empty txtData array returns empty objects', () => {
+    const { txt, txtRaw } = parseTxtData([])
+    assert.deepEqual(txt, {})
+    assert.deepEqual(txtRaw, {})
+  })
+})
+
+describe('Instance name extraction', () => {
+  test('extracts name when FQDN matches suffix', () => {
+    const name = extractInstanceName(
+      'My Printer._http._tcp.local',
+      '_http._tcp.local'
+    )
+    assert.equal(name, 'My Printer')
+  })
+
+  test('returns full FQDN when suffix does not match (fallback)', () => {
+    const name = extractInstanceName(
+      'My Printer._ipp._tcp.local',
+      '_http._tcp.local'
+    )
+    assert.equal(name, 'My Printer._ipp._tcp.local')
   })
 })

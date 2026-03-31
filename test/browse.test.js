@@ -1,6 +1,7 @@
 import { describe, test, before, after, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { DnsSdBrowser } from '../lib/index.js'
+import { parseServiceType } from '../lib/service.js'
 import { TestAdvertiser } from './helpers/advertiser.js'
 import { nextEvent, collectEvents, getRandomPort, delay, TEST_INTERFACE } from './helpers/utils.js'
 
@@ -1347,5 +1348,204 @@ describe('Manual service removal (browser.removeService)', () => {
     assert.equal(reUp.service.name, 'Comeback')
 
     browser.destroy()
+  })
+})
+
+describe('parseServiceType', () => {
+  test('parses 3-part string with .local suffix', () => {
+    const result = parseServiceType('_http._tcp.local')
+    assert.equal(result.type, '_http._tcp')
+    assert.equal(result.protocol, 'tcp')
+    assert.equal(result.domain, 'local')
+    assert.equal(result.queryName, '_http._tcp.local')
+  })
+
+  test('parses 2-part string without .local suffix', () => {
+    const result = parseServiceType('_http._tcp')
+    assert.equal(result.type, '_http._tcp')
+    assert.equal(result.protocol, 'tcp')
+    assert.equal(result.domain, 'local')
+    assert.equal(result.queryName, '_http._tcp.local')
+  })
+
+  test('parses UDP protocol', () => {
+    const result = parseServiceType('_dns._udp')
+    assert.equal(result.protocol, 'udp')
+  })
+
+  test('object form with underscored name and protocol', () => {
+    const result = parseServiceType({ name: '_http', protocol: '_tcp' })
+    assert.equal(result.type, '_http._tcp')
+    assert.equal(result.protocol, 'tcp')
+  })
+
+  test('single-label string defaults protocol to tcp', () => {
+    const result = parseServiceType('_http')
+    assert.equal(result.type, '_http')
+    assert.equal(result.protocol, 'tcp')
+    assert.equal(result.queryName, '_http.local')
+  })
+
+  test('rejects null/undefined service type object', () => {
+    assert.throws(() => parseServiceType(null), /non-empty "name" property/)
+  })
+
+  test('rejects service type object with empty name', () => {
+    assert.throws(() => parseServiceType({ name: '' }), /non-empty "name" property/)
+  })
+
+  test('rejects non-string, non-object service type', () => {
+    assert.throws(() => parseServiceType(123), /non-empty string/)
+  })
+
+  test('rejects empty string service type', () => {
+    assert.throws(() => parseServiceType(''), /non-empty string/)
+  })
+})
+
+describe('Post-destroy behavior', () => {
+  /** @type {number} */
+  let port
+  /** @type {DnsSdBrowser} */
+  let mdns
+  /** @type {TestAdvertiser} */
+  let advertiser
+
+  before(async () => {
+    port = await getRandomPort()
+    advertiser = new TestAdvertiser({ port })
+    await advertiser.start()
+  })
+
+  after(async () => {
+    await advertiser.stop()
+  })
+
+  beforeEach(async () => {
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    mdns.browse('_noop._tcp').destroy()
+    await mdns.ready()
+  })
+
+  afterEach(async () => {
+    await mdns.destroy()
+  })
+
+  test('throws when creating a second concurrent iterator', () => {
+    const browser = mdns.browse('_http._tcp')
+    // First iterator is fine
+    browser[Symbol.asyncIterator]()
+    // Second should throw
+    assert.throws(
+      () => browser[Symbol.asyncIterator](),
+      /single concurrent async iterator/
+    )
+    browser.destroy()
+  })
+
+  test('existing iterator throws after destroy', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    browser.destroy()
+    await assert.rejects(iter.next(), /Browser has been destroyed/)
+  })
+
+  test('creating a new iterator after destroy throws', () => {
+    const browser = mdns.browse('_http._tcp')
+    browser.destroy()
+
+    assert.throws(
+      () => browser[Symbol.asyncIterator](),
+      /Browser has been destroyed/
+    )
+  })
+
+  test('removeService() after destroy throws', () => {
+    const browser = mdns.browse('_http._tcp')
+    browser.destroy()
+
+    assert.throws(
+      () => browser.removeService('anything._http._tcp.local'),
+      /Browser has been destroyed/
+    )
+  })
+
+  test('reconfirm() after destroy throws', () => {
+    const browser = mdns.browse('_http._tcp')
+    browser.destroy()
+
+    assert.throws(
+      () => browser.reconfirm('anything._http._tcp.local'),
+      /Browser has been destroyed/
+    )
+  })
+
+  test('DnsSdBrowser.rejoin() after destroy throws', async () => {
+    const fresh = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    fresh.browse('_noop._tcp').destroy()
+    await fresh.ready()
+    await fresh.destroy()
+
+    assert.throws(
+      () => fresh.rejoin(),
+      /has been destroyed/
+    )
+  })
+
+  test('browse() with already-aborted signal is immediately destroyed', () => {
+    const controller = new AbortController()
+    controller.abort()
+
+    const browser = mdns.browse('_http._tcp', { signal: controller.signal })
+
+    // Browser is destroyed synchronously — creating an iterator should throw
+    assert.throws(
+      () => browser[Symbol.asyncIterator](),
+      /Browser has been destroyed/
+    )
+  })
+})
+
+describe('DnsSdBrowser.ready()', () => {
+  test('throws when called before browse()', async () => {
+    const mdns = new DnsSdBrowser()
+    await assert.rejects(
+      () => mdns.ready(),
+      /Cannot call ready\(\) before browse\(\)/
+    )
+    await mdns.destroy()
+  })
+
+  test('surfaces the underlying transport error', async (t) => {
+    // Use a port that requires elevated privileges to reliably cause a bind error.
+    // On Linux, binding to a well-known port (< 1024) as non-root should fail.
+    const mdns = new DnsSdBrowser({ port: 1 })
+
+    // Trigger start
+    mdns.browse('_http._tcp').destroy()
+
+    // Give the start promise time to settle
+    await new Promise((r) => setTimeout(r, 200))
+
+    let threw = false
+    try {
+      await mdns.ready()
+      // If ready() didn't throw, the port bind succeeded (e.g. running as root)
+    } catch (err) {
+      threw = true
+      // The error should be the real bind error, not a generic message
+      assert.ok(err instanceof Error)
+      assert.ok(
+        err.message.includes('EACCES') || err.message.includes('EADDRINUSE') || err.message.includes('EPERM'),
+        `Expected a bind error but got: ${err.message}`
+      )
+    } finally {
+      await mdns.destroy()
+    }
+
+    if (!threw) {
+      t.skip('port 1 bind succeeded (likely running as root)')
+    }
   })
 })
