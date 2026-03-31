@@ -558,7 +558,14 @@ async function hasIPv6() {
   return new Promise((resolve) => {
     const s = createSocket({ type: 'udp6', reuseAddr: true })
     s.on('error', () => { resolve(false) })
-    s.bind(0, '::1', () => {
+    s.bind(0, () => {
+      try {
+        s.addMembership('FF02::FB')
+        s.dropMembership('FF02::FB')
+      } catch {
+        s.close(() => resolve(false))
+        return
+      }
       s.close(() => resolve(true))
     })
   })
@@ -716,76 +723,82 @@ describe('IPv6 multicast support', () => {
 
     // Create an IPv6 advertiser that sends to FF02::FB on the test port
     const sock6 = createSocket({ type: 'udp6', reuseAddr: true })
-    await new Promise((resolve, reject) => {
-      sock6.on('error', reject)
-      sock6.bind(port, () => {
-        sock6.addMembership('FF02::FB')
-        sock6.setMulticastLoopback(true)
-        sock6.removeListener('error', reject)
-        resolve(undefined)
+    try {
+      await new Promise((resolve, reject) => {
+        sock6.on('error', reject)
+        sock6.bind(port, () => {
+          try {
+            sock6.addMembership('FF02::FB')
+            sock6.setMulticastLoopback(true)
+            sock6.removeListener('error', reject)
+            resolve(undefined)
+          } catch (err) {
+            reject(err)
+          }
+        })
       })
-    })
 
-    // Send a service announcement over IPv6
-    const pkt = dnsPacketMod.encode({
-      type: 'response',
-      id: 0,
-      flags: dnsPacketMod.AUTHORITATIVE_ANSWER,
-      answers: [
-        {
-          type: 'PTR',
-          name: '_http._tcp.local',
-          ttl: 4500,
-          class: 'IN',
-          data: 'IPv6Svc._http._tcp.local',
-        },
-        {
-          type: 'SRV',
-          name: 'IPv6Svc._http._tcp.local',
-          ttl: 120,
-          class: 'IN',
-          flush: true,
-          data: { target: 'v6host.local', port: 8080, priority: 0, weight: 0 },
-        },
-        {
-          type: 'TXT',
-          name: 'IPv6Svc._http._tcp.local',
-          ttl: 4500,
-          class: 'IN',
-          flush: true,
-          data: ['via=ipv6'],
-        },
-      ],
-      additionals: [
-        {
-          type: 'AAAA',
-          name: 'v6host.local',
-          ttl: 120,
-          class: 'IN',
-          flush: true,
-          data: '::1',
-        },
-      ],
-    })
-
-    await new Promise((resolve, reject) => {
-      sock6.send(pkt, 0, pkt.length, port, 'FF02::FB', (err) => {
-        if (err) reject(err)
-        else resolve(undefined)
+      // Send a service announcement over IPv6
+      const pkt = dnsPacketMod.encode({
+        type: 'response',
+        id: 0,
+        flags: dnsPacketMod.AUTHORITATIVE_ANSWER,
+        answers: [
+          {
+            type: 'PTR',
+            name: '_http._tcp.local',
+            ttl: 4500,
+            class: 'IN',
+            data: 'IPv6Svc._http._tcp.local',
+          },
+          {
+            type: 'SRV',
+            name: 'IPv6Svc._http._tcp.local',
+            ttl: 120,
+            class: 'IN',
+            flush: true,
+            data: { target: 'v6host.local', port: 8080, priority: 0, weight: 0 },
+          },
+          {
+            type: 'TXT',
+            name: 'IPv6Svc._http._tcp.local',
+            ttl: 4500,
+            class: 'IN',
+            flush: true,
+            data: ['via=ipv6'],
+          },
+        ],
+        additionals: [
+          {
+            type: 'AAAA',
+            name: 'v6host.local',
+            ttl: 120,
+            class: 'IN',
+            flush: true,
+            data: '::1',
+          },
+        ],
       })
-    })
 
-    const event = await nextEvent(iter, 5000)
-    assert.equal(event.type, 'serviceUp')
-    assert.equal(event.service.name, 'IPv6Svc')
-    assert.equal(event.service.txt.via, 'ipv6')
-    assert.ok(
-      event.service.addresses.some((a) => a.includes('::1')),
-      `Expected an IPv6 address but got: ${event.service.addresses}`
-    )
+      await new Promise((resolve, reject) => {
+        sock6.send(pkt, 0, pkt.length, port, 'FF02::FB', (err) => {
+          if (err) reject(err)
+          else resolve(undefined)
+        })
+      })
 
-    browser.destroy()
-    await mdns.destroy()
-    await new Promise((resolve) => sock6.close(resolve))
+      const event = await nextEvent(iter, 5000)
+      assert.equal(event.type, 'serviceUp')
+      assert.equal(event.service.name, 'IPv6Svc')
+      assert.equal(event.service.txt.via, 'ipv6')
+      assert.ok(
+        event.service.addresses.some((a) => a.includes('::1')),
+        `Expected an IPv6 address but got: ${event.service.addresses}`
+      )
+    } finally {
+      browser.destroy()
+      await mdns.destroy()
+      await new Promise((resolve) => sock6.close(resolve))
+    }
   })
 })
