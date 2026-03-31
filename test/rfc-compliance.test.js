@@ -1832,3 +1832,144 @@ describe('Passive Observation of Failures (POOF) — RFC 6762 §10.5', () => {
     browser.destroy()
   })
 })
+
+// ─── Case-insensitive DNS name matching (RFC 1035 §3.1) ─────────────
+
+describe('Case-insensitive DNS name matching (RFC 1035 §3.1)', () => {
+  /** @type {number} */
+  let port
+  /** @type {DnsSdBrowser} */
+  let mdns
+  /** @type {TestAdvertiser} */
+  let advertiser
+
+  before(async () => {
+    port = await getRandomPort()
+    advertiser = new TestAdvertiser({ port })
+    await advertiser.start()
+  })
+
+  after(async () => {
+    await advertiser.stop()
+  })
+
+  beforeEach(async () => {
+    mdns = new DnsSdBrowser({ port, interface: TEST_INTERFACE })
+    mdns.browse('_noop._tcp').destroy()
+    await mdns.ready()
+    advertiser.clearQueries()
+  })
+
+  afterEach(async () => {
+    await mdns.destroy()
+  })
+
+  test('resolves SRV record with different casing than PTR data', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    // Send a raw packet where the PTR data uses mixed case but SRV name
+    // uses lowercase — this tests case-insensitive matching on SRV lookup
+    const packet = dnsPacket.encode({
+      type: 'response',
+      id: 0,
+      flags: dnsPacket.AUTHORITATIVE_ANSWER,
+      questions: [],
+      answers: [
+        {
+          type: 'PTR',
+          name: '_http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          data: 'My Service._http._tcp.local',
+        },
+        {
+          type: 'SRV',
+          // Different casing than the PTR data
+          name: 'my service._http._tcp.local',
+          ttl: 120,
+          class: 'IN',
+          flush: true,
+          data: { target: 'myhost.local', port: 8080, priority: 0, weight: 0 },
+        },
+        {
+          type: 'TXT',
+          name: 'my service._http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          flush: true,
+          data: ['key=val'],
+        },
+      ],
+      additionals: [
+        {
+          type: 'A',
+          // Different casing on the host too
+          name: 'MyHost.local',
+          ttl: 120,
+          class: 'IN',
+          flush: true,
+          data: '192.168.1.100',
+        },
+      ],
+    })
+
+    await advertiser.sendRaw(packet)
+    const event = await nextEvent(iter)
+
+    assert.equal(event.type, 'serviceUp')
+    assert.equal(event.service.port, 8080)
+    assert.equal(event.service.host, 'myhost.local')
+    // The A record with "MyHost.local" should match "myhost.local" case-insensitively
+    assert.ok(
+      event.service.addresses.includes('192.168.1.100'),
+      `Expected addresses to include 192.168.1.100 but got: ${event.service.addresses}`
+    )
+
+    browser.destroy()
+  })
+
+  test('matches TXT updates with different casing on known service', async () => {
+    const browser = mdns.browse('_http._tcp')
+    const iter = browser[Symbol.asyncIterator]()
+
+    // First announce normally
+    await advertiser.announce({
+      name: 'CaseTest',
+      type: '_http._tcp',
+      host: 'casehost.local',
+      port: 9090,
+      addresses: ['10.0.0.1'],
+      txt: { version: '1' },
+    })
+
+    const up = await nextEvent(iter)
+    assert.equal(up.type, 'serviceUp')
+
+    // Now send a TXT update with different casing on the name
+    const txtUpdate = dnsPacket.encode({
+      type: 'response',
+      id: 0,
+      flags: dnsPacket.AUTHORITATIVE_ANSWER,
+      questions: [],
+      answers: [
+        {
+          type: 'TXT',
+          // Lowercase instead of the original mixed case
+          name: 'casetest._http._tcp.local',
+          ttl: 4500,
+          class: 'IN',
+          flush: true,
+          data: ['version=2'],
+        },
+      ],
+    })
+
+    await advertiser.sendRaw(txtUpdate)
+    const updated = await nextEvent(iter)
+    assert.equal(updated.type, 'serviceUpdated')
+    assert.equal(updated.service.txt.version, '2')
+
+    browser.destroy()
+  })
+})
