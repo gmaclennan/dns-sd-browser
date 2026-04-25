@@ -12,8 +12,8 @@
     "dist"
   ],
   "scripts": {
-    "test": "c8 node --test test/**/*.test.js",
-    "test:ci": "c8 --reporter=text --reporter=lcov node --test test/**/*.test.js",
+    "test": "c8 node --test test/*.test.js",
+    "test:ci": "c8 --reporter=text --reporter=lcov node --test test/*.test.js",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "prepack": "npm run build"
@@ -33,7 +33,7 @@
     "url": "git+https://github.com/gmaclennan/dns-sd-browser.git"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=18.20.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.15",
