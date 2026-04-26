@@ -1,0 +1,22 @@
+{
+  "additionals": [],
+  "answers": [],
+  "authorities": [],
+  "flags": {
+    "aa": false,
+    "opcode": 0,
+    "qr": false,
+    "ra": false,
+    "rcode": 0,
+    "rd": false,
+    "tc": false
+  },
+  "id": 12769,
+  "questions": [
+    {
+      "name": "5.e.c.1.4.9.e.f.f.f.a.d.9.0.2.b.6.8.7.a.2.0.4.1.5.0.0.3.3.0.6.2.ip6.arpa",
+      "qu": false,
+      "type": 12
+    }
+  ]
+}

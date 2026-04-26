@@ -5,8 +5,13 @@ LICENSE); the items below retain their original license terms.
 ================================================================================
 test/fixtures/packets/dnssd-js/*
 
-Source: https://github.com/DeMille/dnssd.js/tree/master/test/data/packets
+Source: https://github.com/DeMille/dnssd.js/tree/d66f0dd6c62300f3a2df38186c23c6ffacc02afc/test/data/packets
+        (master at the time of import; commit-pinned URL above)
 License: MIT
+Status:  Files present in this directory are imported verbatim with no
+         modifications. A subset of the upstream fixtures was deliberately
+         excluded because it contained an apparently un-anonymised device
+         MAC address; see test/fixtures/packets/README.md for the list.
 
   Copyright Sterling DeMille
 
@@ -37,3 +42,4 @@ License: per the Wireshark Sample Captures policy
          to that collection are released into the public domain unless
          individually noted otherwise. The dns-mdns.pcap file carries no
          such individual note.
+Status:  Imported verbatim with no modifications.

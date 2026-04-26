@@ -19,33 +19,55 @@ UPDATE_SNAPSHOTS=1 node --test test/golden.test.js
 
 Review the snapshot diff before committing.
 
+## What this catches (and what it doesn't)
+
+Each snapshot captures the **decoder's parsed output** of a wire packet.
+A regression in record framing — name compression, RDATA boundaries,
+packet section counts — will surface as a JSON diff. However, `lib/dns.js`
+only structurally decodes A / AAAA / PTR / SRV / TXT records. Other types
+(NSEC=47, HINFO=13, OPT=41, …) are preserved as opaque RDATA bytes (shown
+as `{ "hex": "…" }` in the snapshots), so a regression *inside* those
+RDATA bytes is not caught here — only a regression in their envelope is.
+
 ## Provenance
 
 ### `dnssd-js/`
 
-24 fixtures imported verbatim from
-[DeMille/dnssd.js — `test/data/packets/`](https://github.com/DeMille/dnssd.js/tree/master/test/data/packets),
-licensed MIT (see `THIRD_PARTY_LICENSES` at the repo root). Notable cases
-this corpus covers that our synthetic tests do not:
+20 fixtures imported verbatim from
+[DeMille/dnssd.js — `test/data/packets/`](https://github.com/DeMille/dnssd.js/tree/d66f0dd6c62300f3a2df38186c23c6ffacc02afc/test/data/packets)
+(commit `d66f0dd`), licensed MIT (see `THIRD_PARTY_LICENSES` at the repo
+root). Notable cases this corpus covers that our synthetic tests do not:
 
 - NSEC records (type 47) in the additionals section, as Avahi /
   mDNSResponder commonly ship them.
 - Real Chromecast service-probe packet (with TXT keys redacted in the
   upstream — IDs are padded with `1`s).
-- AirPlay / RAOP-style instance names (`MAC@Name._raop._tcp.local`).
 - A query with a long known-answer list (suppression edge cases).
 - Multiple announcements with OPT pseudo-records.
 - TXT records up to several hundred bytes.
+- HINFO answer (uncommon but valid).
 
 For each case the corpus provides both a compressed packet (`*.bin`) and
 a hand-uncompressed reference (`*.uncompressed.bin`), so name-compression
 handling can be exercised in both directions.
+
+**Excluded from the upstream import:** `oddly repeated questions.bin` and
+`multiple queries, known answer, opt.bin` (and their `.uncompressed.bin`
+siblings) were not imported because they contain
+`E3CA3693F4EB@RuneAudio._raop._tcp.local`, which appears to be a real
+device MAC that slipped through the upstream's `1`-padded anonymisation
+pass. AirPlay/RAOP coverage and OPT-record coverage are retained via
+other fixtures in the same corpus.
 
 ### `wireshark/dns-mdns.pcap`
 
 Single mDNS pcap from
 [Wireshark sample captures](https://gitlab.com/wireshark/wireshark/-/blob/master/test/captures/dns-mdns.pcap),
 public-domain per the
-[SampleCaptures policy](https://wiki.wireshark.org/SampleCaptures). Not
-yet replayed by the golden test — this is raw provenance for a follow-up
-that adds a small pcap extractor.
+[SampleCaptures policy](https://wiki.wireshark.org/SampleCaptures).
+Replayed by `test/golden.test.js` via `test/helpers/pcap.js`: each unique
+mDNS UDP payload (deduped by exact bytes) is snapshotted to a
+`<pcap>.NNN.snap.json` sibling, where `NNN` is the packet's
+zero-padded index in capture order. This pcap consists almost entirely
+of IPv6 reverse-DNS queries — useful primarily for exercising long PTR
+names and non-zero query IDs (RFC 6762 §18.1 leniency).
