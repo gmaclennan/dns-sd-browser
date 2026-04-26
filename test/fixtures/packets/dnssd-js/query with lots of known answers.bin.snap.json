@@ -1,0 +1,95 @@
+{
+  "additionals": [],
+  "answers": [
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": "_http._tcp.local",
+      "name": "_services._dns-sd._udp.local",
+      "ttl": 4250,
+      "type": 12
+    },
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": "_dacp._tcp.local",
+      "name": "_services._dns-sd._udp.local",
+      "ttl": 4451,
+      "type": 12
+    },
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": "_workstation._tcp.local",
+      "name": "_services._dns-sd._udp.local",
+      "ttl": 4500,
+      "type": 12
+    },
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": "_smb._tcp.local",
+      "name": "_services._dns-sd._udp.local",
+      "ttl": 4500,
+      "type": 12
+    },
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": "_device-info._tcp.local",
+      "name": "_services._dns-sd._udp.local",
+      "ttl": 4500,
+      "type": 12
+    },
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": "_teamviewer._tcp.local",
+      "name": "_services._dns-sd._udp.local",
+      "ttl": 4500,
+      "type": 12
+    },
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": "_conductor._tcp.local",
+      "name": "_services._dns-sd._udp.local",
+      "ttl": 4500,
+      "type": 12
+    },
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": "_calibre._tcp.local",
+      "name": "_services._dns-sd._udp.local",
+      "ttl": 3600,
+      "type": 12
+    },
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": "_stanza._tcp.local",
+      "name": "_services._dns-sd._udp.local",
+      "ttl": 3600,
+      "type": 12
+    }
+  ],
+  "authorities": [],
+  "flags": {
+    "aa": false,
+    "opcode": 0,
+    "qr": false,
+    "ra": false,
+    "rcode": 0,
+    "rd": false,
+    "tc": false
+  },
+  "id": 0,
+  "questions": [
+    {
+      "name": "_services._dns-sd._udp.local",
+      "qu": false,
+      "type": 12
+    }
+  ]
+}

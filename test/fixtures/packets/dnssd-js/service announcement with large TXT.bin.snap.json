@@ -1,0 +1,192 @@
+{
+  "additionals": [
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": "169.254.22.58",
+      "name": "box.local",
+      "ttl": 120,
+      "type": 1
+    },
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": "fe80::c5b:7534:952d:163a",
+      "name": "box.local",
+      "ttl": 120,
+      "type": 28
+    },
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": [
+        {
+          "hex": "c47a000440000008"
+        }
+      ],
+      "name": "box.local",
+      "ttl": 120,
+      "type": 47
+    },
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": [
+        {
+          "hex": "c00c00050000800040"
+        }
+      ],
+      "name": "Test._testlargetxt._tcp.local",
+      "ttl": 4500,
+      "type": 47
+    }
+  ],
+  "answers": [
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": [
+        {
+          "utf8": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        },
+        {
+          "utf8": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+        },
+        {
+          "utf8": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+        },
+        {
+          "utf8": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD"
+        },
+        {
+          "utf8": "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"
+        },
+        {
+          "utf8": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "utf8": "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG"
+        },
+        {
+          "utf8": "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH"
+        },
+        {
+          "utf8": "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIII"
+        },
+        {
+          "utf8": "JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ"
+        },
+        {
+          "utf8": "KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK"
+        },
+        {
+          "utf8": "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL"
+        },
+        {
+          "utf8": "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM"
+        },
+        {
+          "utf8": "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN"
+        },
+        {
+          "utf8": "OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO"
+        },
+        {
+          "utf8": "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP"
+        },
+        {
+          "utf8": "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+        },
+        {
+          "utf8": "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR"
+        },
+        {
+          "utf8": "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS"
+        },
+        {
+          "utf8": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT"
+        },
+        {
+          "utf8": "UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU"
+        },
+        {
+          "utf8": "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV"
+        },
+        {
+          "utf8": "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW"
+        },
+        {
+          "utf8": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+        },
+        {
+          "utf8": "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY"
+        },
+        {
+          "utf8": "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+        },
+        {
+          "utf8": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[["
+        },
+        {
+          "utf8": "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
+        },
+        {
+          "utf8": "]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]"
+        },
+        {
+          "utf8": "^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
+        },
+        {
+          "utf8": "_______________________________"
+        },
+        {
+          "utf8": "```````````````````````````````"
+        }
+      ],
+      "name": "Test._testlargetxt._tcp.local",
+      "ttl": 4500,
+      "type": 16
+    },
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": "_testlargetxt._tcp.local",
+      "name": "_services._dns-sd._udp.local",
+      "ttl": 4500,
+      "type": 12
+    },
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": "Test._testlargetxt._tcp.local",
+      "name": "_testlargetxt._tcp.local",
+      "ttl": 4500,
+      "type": 12
+    },
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": {
+        "port": 9029,
+        "priority": 0,
+        "target": "box.local",
+        "weight": 0
+      },
+      "name": "Test._testlargetxt._tcp.local",
+      "ttl": 120,
+      "type": 33
+    }
+  ],
+  "authorities": [],
+  "flags": {
+    "aa": true,
+    "opcode": 0,
+    "qr": true,
+    "ra": false,
+    "rcode": 0,
+    "rd": false,
+    "tc": false
+  },
+  "id": 0,
+  "questions": []
+}

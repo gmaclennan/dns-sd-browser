@@ -1,0 +1,36 @@
+{
+  "additionals": [],
+  "answers": [],
+  "authorities": [
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": {
+        "port": 9090,
+        "priority": 0,
+        "target": "box.local",
+        "weight": 0
+      },
+      "name": "test._service._tcp.local",
+      "ttl": 120,
+      "type": 33
+    }
+  ],
+  "flags": {
+    "aa": false,
+    "opcode": 0,
+    "qr": false,
+    "ra": false,
+    "rcode": 0,
+    "rd": false,
+    "tc": false
+  },
+  "id": 0,
+  "questions": [
+    {
+      "name": "test._service._tcp.local",
+      "qu": true,
+      "type": 255
+    }
+  ]
+}

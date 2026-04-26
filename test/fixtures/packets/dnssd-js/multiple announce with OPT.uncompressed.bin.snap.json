@@ -1,0 +1,151 @@
+{
+  "additionals": [
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": [
+        {
+          "hex": "0d424f584054756e65426c616465055f68747470045f746370056c6f63616c0000050000800040"
+        }
+      ],
+      "name": "BOX@TuneBlade._http._tcp.local",
+      "ttl": 4500,
+      "type": 47
+    },
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": [
+        {
+          "hex": "01370131033136380331393207696e2d6164647204617270610000020008"
+        }
+      ],
+      "name": "7.1.168.192.in-addr.arpa",
+      "ttl": 120,
+      "type": 47
+    },
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": [
+        {
+          "hex": "013001330142013701430137013601310136013201410131013001430138013601300130013001300130013001300130013001300130013001300138014501460369703604617270610000020008"
+        }
+      ],
+      "name": "0.3.B.7.C.7.6.1.6.2.A.1.0.C.8.6.0.0.0.0.0.0.0.0.0.0.0.0.0.8.E.F.ip6.arpa",
+      "ttl": 120,
+      "type": 47
+    },
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": [
+        {
+          "hex": "03626f78056c6f63616c00000440000008"
+        }
+      ],
+      "name": "box.local",
+      "ttl": 120,
+      "type": 47
+    },
+    {
+      "cacheFlush": false,
+      "class": 1440,
+      "data": [
+        {
+          "hex": "00040008000b002314d9c5d0"
+        }
+      ],
+      "name": "",
+      "ttl": 4500,
+      "type": 41
+    }
+  ],
+  "answers": [
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": [
+        {
+          "utf8": "Password=False"
+        }
+      ],
+      "name": "BOX@TuneBlade._http._tcp.local",
+      "ttl": 4500,
+      "type": 16
+    },
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": "_http._tcp.local",
+      "name": "_services._dns-sd._udp.local",
+      "ttl": 4500,
+      "type": 12
+    },
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": "BOX@TuneBlade._http._tcp.local",
+      "name": "_http._tcp.local",
+      "ttl": 4500,
+      "type": 12
+    },
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": {
+        "port": 51497,
+        "priority": 0,
+        "target": "box.local",
+        "weight": 0
+      },
+      "name": "BOX@TuneBlade._http._tcp.local",
+      "ttl": 120,
+      "type": 33
+    },
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": "box.local",
+      "name": "7.1.168.192.in-addr.arpa",
+      "ttl": 120,
+      "type": 12
+    },
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": "box.local",
+      "name": "0.3.B.7.C.7.6.1.6.2.A.1.0.C.8.6.0.0.0.0.0.0.0.0.0.0.0.0.0.8.E.F.ip6.arpa",
+      "ttl": 120,
+      "type": 12
+    },
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": "192.168.1.7",
+      "name": "box.local",
+      "ttl": 120,
+      "type": 1
+    },
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": "fe80::68c0:1a26:167c:7b30",
+      "name": "box.local",
+      "ttl": 120,
+      "type": 28
+    }
+  ],
+  "authorities": [],
+  "flags": {
+    "aa": true,
+    "opcode": 0,
+    "qr": true,
+    "ra": false,
+    "rcode": 0,
+    "rd": false,
+    "tc": false
+  },
+  "id": 0,
+  "questions": []
+}

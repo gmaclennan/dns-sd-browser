@@ -1,0 +1,31 @@
+{
+  "additionals": [],
+  "answers": [
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": "BOX@TuneBlade._http._tcp.local",
+      "name": "_http._tcp.local",
+      "ttl": 4499,
+      "type": 12
+    }
+  ],
+  "authorities": [],
+  "flags": {
+    "aa": false,
+    "opcode": 0,
+    "qr": false,
+    "ra": false,
+    "rcode": 0,
+    "rd": false,
+    "tc": false
+  },
+  "id": 0,
+  "questions": [
+    {
+      "name": "_http._tcp.local",
+      "qu": false,
+      "type": 12
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "additionals": [],
+  "answers": [],
+  "authorities": [],
+  "flags": {
+    "aa": false,
+    "opcode": 0,
+    "qr": false,
+    "ra": false,
+    "rcode": 0,
+    "rd": false,
+    "tc": false
+  },
+  "id": 0,
+  "questions": [
+    {
+      "name": "b._dns-sd._udp.0.0.254.169.in-addr.arpa",
+      "qu": false,
+      "type": 12
+    },
+    {
+      "name": "db._dns-sd._udp.0.0.254.169.in-addr.arpa",
+      "qu": false,
+      "type": 12
+    },
+    {
+      "name": "r._dns-sd._udp.0.0.254.169.in-addr.arpa",
+      "qu": false,
+      "type": 12
+    },
+    {
+      "name": "dr._dns-sd._udp.0.0.254.169.in-addr.arpa",
+      "qu": false,
+      "type": 12
+    },
+    {
+      "name": "lb._dns-sd._udp.0.0.254.169.in-addr.arpa",
+      "qu": false,
+      "type": 12
+    }
+  ]
+}
