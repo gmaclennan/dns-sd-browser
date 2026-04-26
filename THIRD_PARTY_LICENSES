@@ -8,10 +8,7 @@ test/fixtures/packets/dnssd-js/*
 Source: https://github.com/DeMille/dnssd.js/tree/d66f0dd6c62300f3a2df38186c23c6ffacc02afc/test/data/packets
         (master at the time of import; commit-pinned URL above)
 License: MIT
-Status:  Files present in this directory are imported verbatim with no
-         modifications. A subset of the upstream fixtures was deliberately
-         excluded because it contained an apparently un-anonymised device
-         MAC address; see test/fixtures/packets/README.md for the list.
+Status:  Imported verbatim with no modifications.
 
   Copyright Sterling DeMille
 

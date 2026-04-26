@@ -33,7 +33,7 @@ RDATA bytes is not caught here — only a regression in their envelope is.
 
 ### `dnssd-js/`
 
-20 fixtures imported verbatim from
+24 fixtures imported verbatim from
 [DeMille/dnssd.js — `test/data/packets/`](https://github.com/DeMille/dnssd.js/tree/d66f0dd6c62300f3a2df38186c23c6ffacc02afc/test/data/packets)
 (commit `d66f0dd`), licensed MIT (see `THIRD_PARTY_LICENSES` at the repo
 root). Notable cases this corpus covers that our synthetic tests do not:
@@ -42,6 +42,7 @@ root). Notable cases this corpus covers that our synthetic tests do not:
   mDNSResponder commonly ship them.
 - Real Chromecast service-probe packet (with TXT keys redacted in the
   upstream — IDs are padded with `1`s).
+- AirPlay / RAOP-style instance names (`MAC@Name._raop._tcp.local`).
 - A query with a long known-answer list (suppression edge cases).
 - Multiple announcements with OPT pseudo-records.
 - TXT records up to several hundred bytes.
@@ -50,14 +51,6 @@ root). Notable cases this corpus covers that our synthetic tests do not:
 For each case the corpus provides both a compressed packet (`*.bin`) and
 a hand-uncompressed reference (`*.uncompressed.bin`), so name-compression
 handling can be exercised in both directions.
-
-**Excluded from the upstream import:** `oddly repeated questions.bin` and
-`multiple queries, known answer, opt.bin` (and their `.uncompressed.bin`
-siblings) were not imported because they contain
-`E3CA3693F4EB@RuneAudio._raop._tcp.local`, which appears to be a real
-device MAC that slipped through the upstream's `1`-padded anonymisation
-pass. AirPlay/RAOP coverage and OPT-record coverage are retained via
-other fixtures in the same corpus.
 
 ### `wireshark/dns-mdns.pcap`
 
