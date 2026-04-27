@@ -1,0 +1,8 @@
+# Snapshot JSON is compared byte-for-byte against decoder output (which
+# always emits LF). Pin these to LF on checkout so Windows clones don't
+# get CRLF and break the golden-packet replay tests.
+*.snap.json text eol=lf
+
+# Packet fixtures are wire-format bytes; never touch them.
+*.bin binary
+*.pcap binary
