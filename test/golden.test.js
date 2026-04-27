@@ -239,7 +239,11 @@ function compareRecord(section, ours, ref, label) {
 }
 
 /**
- * Dedupe payloads by content and return them in original capture order.
+ * Dedupe payloads by content (ignoring the 16-bit DNS transaction ID at
+ * offset 0–1) and return them in original capture order. Real captures
+ * tend to repeat the same logical query with rolling IDs; without this,
+ * one Wireshark dump produces dozens of snapshots that differ only in
+ * two bytes, all decoding through the same paths.
  * @param {Uint8Array[]} payloads
  * @returns {Uint8Array[]}
  */
@@ -247,7 +251,11 @@ function dedupeByContent(payloads) {
   const seen = new Set()
   const out = []
   for (const p of payloads) {
-    const h = createHash('sha256').update(p).digest('hex')
+    if (p.byteLength < 2) continue
+    const hash = createHash('sha256')
+    hash.update(new Uint8Array(2)) // zero the id
+    hash.update(p.subarray(2))
+    const h = hash.digest('hex')
     if (seen.has(h)) continue
     seen.add(h)
     out.push(p)

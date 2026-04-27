@@ -5,11 +5,12 @@ that the decoder in `lib/dns.js` handles wire-format shapes that occur in
 the wild — not just the ones we'd construct synthetically with `dns-packet`.
 
 Each `.bin` file is the raw UDP payload of a single mDNS packet. Each has
-a sibling `.snap.json` produced by `dns.decode()` and normalised
-(`Uint8Array` values become `{ utf8 }` if the bytes round-trip cleanly,
-`{ hex }` otherwise). On every test run the decoder is re-applied and the
-result is compared to the snapshot — any decoder change shows up as a
-reviewable JSON diff.
+a sibling `.snap.json` produced by `dns.decode()` and serialised with
+deterministic key ordering (`Uint8Array` values render as `{ "hex": "…" }`).
+On every test run the decoder is re-applied, the result is cross-validated
+against the `dns-packet` library (the actual correctness check), and then
+compared to the snapshot — any decoder change shows up as a reviewable
+JSON diff.
 
 To refresh after a deliberate decoder change:
 
@@ -59,8 +60,11 @@ Single mDNS pcap from
 public-domain per the
 [SampleCaptures policy](https://wiki.wireshark.org/SampleCaptures).
 Replayed by `test/golden.test.js` via `test/helpers/pcap.js`: each unique
-mDNS UDP payload (deduped by exact bytes) is snapshotted to a
-`<pcap>.NNN.snap.json` sibling, where `NNN` is the packet's
-zero-padded index in capture order. This pcap consists almost entirely
-of IPv6 reverse-DNS queries — useful primarily for exercising long PTR
-names and non-zero query IDs (RFC 6762 §18.1 leniency).
+mDNS UDP payload (deduped by content with the 16-bit transaction ID
+zeroed, since real captures repeat the same logical query with rolling
+IDs) is snapshotted to a `<pcap>.NNN.snap.json` sibling, where `NNN` is
+the packet's zero-padded index in capture order. This pcap consists
+almost entirely of IPv6 reverse-DNS queries; after dedupe it collapses
+to a handful of distinct PTR names — useful primarily for exercising
+long DNS labels (close to the 253-char total-name limit) and the pcap
+reader infrastructure end-to-end.
