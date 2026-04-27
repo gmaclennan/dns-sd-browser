@@ -1,0 +1,99 @@
+{
+  "additionals": [
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": "169.254.22.58",
+      "name": "box.local",
+      "ttl": 120,
+      "type": 1
+    },
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": "fe80::c5b:7534:952d:163a",
+      "name": "box.local",
+      "ttl": 120,
+      "type": 28
+    },
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": [
+        {
+          "hex": "03626f78056c6f63616c00000440000008"
+        }
+      ],
+      "name": "box.local",
+      "ttl": 120,
+      "type": 47
+    },
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": [
+        {
+          "hex": "0474657374085f73657276696365045f746370056c6f63616c0000050000800040"
+        }
+      ],
+      "name": "test._service._tcp.local",
+      "ttl": 4500,
+      "type": 47
+    }
+  ],
+  "answers": [
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": [
+        {
+          "hex": ""
+        }
+      ],
+      "name": "test._service._tcp.local",
+      "ttl": 4500,
+      "type": 16
+    },
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": "_service._tcp.local",
+      "name": "_services._dns-sd._udp.local",
+      "ttl": 4500,
+      "type": 12
+    },
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": "test._service._tcp.local",
+      "name": "_service._tcp.local",
+      "ttl": 4500,
+      "type": 12
+    },
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": {
+        "port": 9090,
+        "priority": 0,
+        "target": "box.local",
+        "weight": 0
+      },
+      "name": "test._service._tcp.local",
+      "ttl": 120,
+      "type": 33
+    }
+  ],
+  "authorities": [],
+  "flags": {
+    "aa": true,
+    "opcode": 0,
+    "qr": true,
+    "ra": false,
+    "rcode": 0,
+    "rd": false,
+    "tc": false
+  },
+  "id": 0,
+  "questions": []
+}

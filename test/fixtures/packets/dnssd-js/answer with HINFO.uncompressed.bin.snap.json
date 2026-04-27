@@ -1,0 +1,42 @@
+{
+  "additionals": [
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": [
+        {
+          "hex": "04546573740b5f74657374757064617465045f746370056c6f63616c0000050004800040"
+        }
+      ],
+      "name": "Test._testupdate._tcp.local",
+      "ttl": 4500,
+      "type": 47
+    }
+  ],
+  "answers": [
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": [
+        {
+          "hex": "0250430a57696e646f7773205850"
+        }
+      ],
+      "name": "Test._testupdate._tcp.local",
+      "ttl": 4500,
+      "type": 13
+    }
+  ],
+  "authorities": [],
+  "flags": {
+    "aa": true,
+    "opcode": 0,
+    "qr": true,
+    "ra": false,
+    "rcode": 0,
+    "rd": false,
+    "tc": false
+  },
+  "id": 0,
+  "questions": []
+}

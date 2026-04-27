@@ -1,0 +1,88 @@
+{
+  "additionals": [],
+  "answers": [],
+  "authorities": [
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": [
+        {
+          "hex": "69643d3331313164306533346662326431316564313131396338313131316538313131"
+        },
+        {
+          "hex": "726d3d31313136464234374635314638313131"
+        },
+        {
+          "hex": "76653d3035"
+        },
+        {
+          "hex": "6d643d4368726f6d6563617374"
+        },
+        {
+          "hex": "69633d2f73657475702f69636f6e2e706e67"
+        },
+        {
+          "hex": "666e3d536f6d654368726f6d6563617374"
+        },
+        {
+          "hex": "63613d34313031"
+        },
+        {
+          "hex": "73743d30"
+        },
+        {
+          "hex": "62733d313131464341334339313131"
+        },
+        {
+          "hex": "72733d"
+        }
+      ],
+      "name": "SomeChromecast._googlecast._tcp.local",
+      "ttl": 4500,
+      "type": 16
+    },
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": {
+        "port": 8009,
+        "priority": 0,
+        "target": "SomeChromecast.local",
+        "weight": 0
+      },
+      "name": "SomeChromecast._googlecast._tcp.local",
+      "ttl": 120,
+      "type": 33
+    },
+    {
+      "cacheFlush": true,
+      "class": 1,
+      "data": "192.168.1.4",
+      "name": "SomeChromecast.local",
+      "ttl": 120,
+      "type": 1
+    }
+  ],
+  "flags": {
+    "aa": false,
+    "opcode": 0,
+    "qr": false,
+    "ra": false,
+    "rcode": 0,
+    "rd": false,
+    "tc": false
+  },
+  "id": 0,
+  "questions": [
+    {
+      "name": "SomeChromecast._googlecast._tcp.local",
+      "qu": false,
+      "type": 255
+    },
+    {
+      "name": "SomeChromecast.local",
+      "qu": false,
+      "type": 255
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "additionals": [],
+  "answers": [
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": "test._service._tcp.local",
+      "name": "_service._tcp.local",
+      "ttl": 0,
+      "type": 12
+    }
+  ],
+  "authorities": [],
+  "flags": {
+    "aa": true,
+    "opcode": 0,
+    "qr": true,
+    "ra": false,
+    "rcode": 0,
+    "rd": false,
+    "tc": false
+  },
+  "id": 0,
+  "questions": []
+}

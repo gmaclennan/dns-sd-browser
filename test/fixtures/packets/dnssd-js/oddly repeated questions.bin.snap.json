@@ -1,0 +1,46 @@
+{
+  "additionals": [],
+  "answers": [
+    {
+      "cacheFlush": false,
+      "class": 1,
+      "data": "E3CA3693F4EB@RuneAudio._raop._tcp.local",
+      "name": "_raop._tcp.local",
+      "ttl": 4180,
+      "type": 12
+    }
+  ],
+  "authorities": [],
+  "flags": {
+    "aa": false,
+    "opcode": 0,
+    "qr": false,
+    "ra": false,
+    "rcode": 0,
+    "rd": false,
+    "tc": false
+  },
+  "id": 0,
+  "questions": [
+    {
+      "name": "_raop._tcp.local",
+      "qu": true,
+      "type": 12
+    },
+    {
+      "name": "_airplay._tcp.local",
+      "qu": true,
+      "type": 12
+    },
+    {
+      "name": "_raop._tcp.local",
+      "qu": true,
+      "type": 12
+    },
+    {
+      "name": "_airplay._tcp.local",
+      "qu": true,
+      "type": 12
+    }
+  ]
+}

@@ -12,7 +12,7 @@
     "dist"
   ],
   "scripts": {
-    "test": "c8 node --test test/browse.test.js test/features.test.js test/leniency.test.js test/packet.test.js test/rfc-compliance.test.js test/security.test.js",
+    "test": "c8 node --test",
     "test:ci": "c8 --reporter=text --reporter=lcov node --test",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
@@ -39,6 +39,7 @@
     "@types/node": "^22.19.15",
     "c8": "^11.0.0",
     "dns-packet": "^5.6.1",
+    "safe-stable-stringify": "^2.5.0",
     "typescript": "^5.7.0"
   }
 }
