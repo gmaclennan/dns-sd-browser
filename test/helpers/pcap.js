@@ -48,7 +48,12 @@ export function extractMdnsPayloads(buf) {
     const inclLen = view.getUint32(offset + 8, littleEndian)
     offset += PCAP_RECORD_HEADER_LEN
 
-    if (offset + inclLen > buf.byteLength) break
+    if (offset + inclLen > buf.byteLength) {
+      throw new Error(
+        `pcap: truncated record at offset ${offset - PCAP_RECORD_HEADER_LEN} ` +
+          `(inclLen=${inclLen}, remaining=${buf.byteLength - offset})`
+      )
+    }
 
     const frame = buf.subarray(offset, offset + inclLen)
     offset += inclLen
@@ -85,11 +90,20 @@ function extractMdnsFromFrame(frame, linkType) {
     }
   } else if (linkType === LINK_TYPE_NULL) {
     // BSD loopback: 4-byte address-family in host byte order. Both
-    // endiannesses appear in the wild, so accept either.
+    // endiannesses appear in the wild, so accept either. AF_INET6 differs
+    // by OS (24 FreeBSD, 28 Darwin, 30 OpenBSD).
     if (frame.byteLength < 4) return null
     const family = view.getUint32(0, true)
     if (family === 2 || family === 0x02000000) ethertype = 0x0800
-    else if (family === 24 || family === 28 || family === 30) ethertype = 0x86dd
+    else if (
+      family === 24 ||
+      family === 28 ||
+      family === 30 ||
+      family === 0x18000000 ||
+      family === 0x1c000000 ||
+      family === 0x1e000000
+    )
+      ethertype = 0x86dd
     else return null
     off = 4
   } else if (linkType === LINK_TYPE_RAW) {
@@ -108,7 +122,12 @@ function extractMdnsFromFrame(frame, linkType) {
   let udpOff
   if (ethertype === 0x0800) {
     if (frame.byteLength < off + 20) return null
+    const version = (frame[off] >> 4) & 0xf
     const ihl = (frame[off] & 0x0f) * 4
+    if (version !== 4 || ihl < 20 || off + ihl > frame.byteLength) return null
+    // Drop fragmented IPv4: MF flag set, or non-zero fragment offset.
+    const fragField = view.getUint16(off + 6, false)
+    if ((fragField & 0x3fff) !== 0) return null
     const proto = frame[off + 9]
     if (proto !== PROTO_UDP) return null
     udpOff = off + ihl

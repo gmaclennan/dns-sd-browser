@@ -4,8 +4,8 @@
  * Decodes every `.bin` fixture under `test/fixtures/packets/` with
  * `lib/dns.js` and compares the result to a sibling `.snap.json` file.
  * Also walks any `.pcap` fixture, extracts each unique mDNS UDP payload,
- * and snapshots it as `<pcap>.NNN.snap.json` (zero-padded by capture
- * order so the diff stays stable).
+ * and snapshots it as `<pcap>.NNN.snap.json` indexed by capture order
+ * (zero-padded so lexical sort matches numeric order).
  *
  * A new fixture (or one without a snapshot) writes its snapshot on the
  * first run when `UPDATE_SNAPSHOTS=1` is set; otherwise the missing
@@ -171,8 +171,11 @@ describe('Golden packet replay', () => {
     }
 
     // .pcap: extract every unique mDNS payload, snapshot each by capture
-    // index. Index width is fixed (3 digits) so additions/removals don't
-    // renumber the rest.
+    // index. Zero-padding to 3 digits keeps lexical sort matching numeric
+    // order (so the diff lists snapshots in capture order). It does NOT
+    // prevent renumbering — adding/removing a payload mid-capture shifts
+    // every later index. Replacing the whole pcap is therefore a deliberate
+    // act: re-run with UPDATE_SNAPSHOTS=1 and review the full diff.
     test(`extracts and decodes ${relPath}`, () => {
       const buf = readFileSync(fixturePath)
       const payloads = dedupeByContent(extractMdnsPayloads(buf))
