@@ -45,7 +45,11 @@
     {
       "cacheFlush": true,
       "class": 1,
-      "data": [],
+      "data": [
+        {
+          "hex": ""
+        }
+      ],
       "name": "test._service._tcp.local",
       "ttl": 4500,
       "type": 16

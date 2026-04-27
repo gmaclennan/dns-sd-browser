@@ -39,6 +39,7 @@
     "@types/node": "^22.19.15",
     "c8": "^11.0.0",
     "dns-packet": "^5.6.1",
+    "safe-stable-stringify": "^2.5.0",
     "typescript": "^5.7.0"
   }
 }

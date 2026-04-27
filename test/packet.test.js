@@ -634,6 +634,21 @@ describe('DNS record encoding', () => {
     assert.equal(decoded.answers?.[0].type, 'TXT')
   })
 
+  test('round-trips the DNS root name (.) as a single zero byte', () => {
+    // Root-only names appear on OPT records (RFC 6891). Decoder produces
+    // ".", encoder accepts "." (and "" for legacy callers) and emits the
+    // single-zero-byte wire form.
+    const buf = dns.encodeQuery({
+      questions: [{ name: '.', type: dns.RecordType.A }],
+    })
+    // Wire form: 12-byte header + 1 byte (0x00 root) + 4 bytes (qtype + qclass)
+    assert.equal(buf.length, 17)
+    assert.equal(buf[12], 0)
+
+    const decoded = dns.decode(buf)
+    assert.equal(decoded.questions[0].name, '.')
+  })
+
   test('encodes QU bit in question', () => {
     const buf = dns.encodeQuery({
       questions: [{ name: '_http._tcp.local', type: dns.RecordType.PTR, qu: true }],
@@ -898,7 +913,7 @@ describe('DNS name decoding edge cases', () => {
 
     // Should decode successfully — not throw
     const pkt = dns.decode(buf)
-    assert.equal(pkt.questions[0].name, '')
+    assert.equal(pkt.questions[0].name, '.')
   })
 
   test('throws on oversized label length', () => {
