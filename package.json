@@ -12,7 +12,7 @@
     "dist"
   ],
   "scripts": {
-    "test": "c8 node --test test/browse.test.js test/features.test.js test/golden.test.js test/leniency.test.js test/packet.test.js test/rfc-compliance.test.js test/security.test.js",
+    "test": "c8 node --test",
     "test:ci": "c8 --reporter=text --reporter=lcov node --test",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
