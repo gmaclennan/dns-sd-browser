@@ -23,7 +23,7 @@ Spec-compliant [DNS-SD](https://www.rfc-editor.org/rfc/rfc6763) browser over
 npm install dns-sd-browser
 ```
 
-Requires Node.js >= 22.
+Requires Node.js >= 18.20.
 
 ## Usage
 
@@ -757,7 +757,7 @@ different trade-offs. Here's how they compare:
 | **Known-answer suppression** | Yes                       | No                                                            | N/A (low-level)                                             | Yes                                          | System-level                               |
 | **TTL expiration**           | Yes                       | No                                                            | N/A (low-level)                                             | Yes                                          | System-level                               |
 | **Continuous querying**      | Yes (exponential backoff) | Yes (fixed interval)                                          | N/A (low-level)                                             | Yes                                          | System-level                               |
-| **Node.js**                  | >= 22                     | Any                                                           | Any                                                         | >= 6                                         | Any (with native toolchain)                |
+| **Node.js**                  | >= 18.20                  | Any                                                           | Any                                                         | >= 6                                         | Any (with native toolchain)                |
 | **Last published**           | New                       | Nov 2024                                                      | May 2022                                                    | May 2018                                     | Nov 2020                                   |
 
 ### Notes
@@ -792,7 +792,7 @@ dependencies and implements the querier side of the RFCs thoroughly
 (known-answer suppression, TTL expiration, cache-flush handling, continuous
 querying with exponential backoff). The async iterator API avoids common
 EventEmitter pitfalls like forgotten error handlers. The trade-offs are that
-it's new and less battle-tested than the alternatives, it requires Node.js 22+,
+it's new and less battle-tested than the alternatives, it requires Node.js 18.20+,
 and it only browses — you'll need a separate library if you also need to
 advertise services.
 
